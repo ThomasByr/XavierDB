@@ -1,0 +1,6 @@
+/target
+.env
+authorized_keys.yml
+config
+config.bak*
+node_modules/
