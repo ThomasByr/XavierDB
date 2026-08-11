@@ -1,0 +1,16 @@
+{
+  "name": "xavierdb",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "build": "esbuild src/assets/ts/app.ts --bundle --minify --outfile=src/assets/app.js --target=es2020",
+    "watch": "esbuild src/assets/ts/app.ts --bundle --outfile=src/assets/app.js --watch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
