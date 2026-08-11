@@ -1,0 +1,87 @@
+services:
+  xavierdb:
+    restart: unless-stopped
+    image: mongodb/mongodb-community-server:latest  # official MongoDB Community image
+    container_name: XavierDB
+    user: ":"
+    environment:
+      - TZ=Europe/Paris
+    ports:
+      - "127.0.0.1:27017:27017"                     # bind only to localhost
+    volumes:
+      - "${HOME}/data/xavier-mongo-db:/data/db"     # persistent data directory
+      - xavier_configdb:/data/configdb
+    deploy:
+      resources:
+        limits:
+          memory: 6.5g                              # Docker enforces the cgroup memory limit
+          cpus: "2.0"                               # 3.0 -> 2.0 (user change)
+    command: >
+      --wiredTigerCacheSizeGB 2.5
+      --setParameter wiredTigerConcurrentReadTransactions=64
+      --setParameter wiredTigerConcurrentWriteTransactions=64
+    ulimits:
+      nofile:
+        soft: 65536                                 # raise soft limit
+        hard: 1048576                               # raise hard limit
+    memswap_limit: 7.5g                             # caps RAM+swap
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        # real ping every interval — the previous /tmp/mongo_ready marker
+        # made the check pass forever after the first success, hiding a
+        # mongod death
+        - mongosh --quiet --eval "quit(db.adminCommand('ping').ok ? 0 : 1)"
+      interval: 5s
+      timeout: 10s
+      start_period: 10s
+      retries: 100
+  api:
+    restart: unless-stopped
+    # No `image:` key on purpose: with both `build:` and `image:`, compose
+    # tags the built image with that name — which would clobber the official
+    # rust:1-slim-bookworm tag locally. The image is built FROM
+    # rust:1-slim-bookworm (see Dockerfile); compose names it <project>-api.
+    build: .
+    container_name: XavierAPI
+    user: ":"
+    environment:
+      - TZ=Europe/Paris
+      - HOST=0.0.0.0                               # default 127.0.0.1 is unreachable inside a container
+      - MONGODB_URI=mongodb://xavierdb:27017       # mongo service name; default localhost won't work
+    working_dir: /app
+    volumes:
+      - ".:/app"                                    # repo root = single source of truth: .env, config, config.bak, authorized_keys.yml
+    ports:
+      - "8000:8000"                                 # forward the API on port 8000
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "2.0"                               # 1.0 -> 2.0 (user change)
+    memswap_limit: 2g
+    depends_on:
+      xavierdb:
+        condition: service_healthy
+    healthcheck:
+      # cheap local curl against the cached /health; the https fallback
+      # keeps the check green when TLS is enabled in .env (with TLS the
+      # plain-http listener does not exist at all)
+      test:
+        - "CMD-SHELL"
+        - curl -fsS http://localhost:8000/health || curl -fksS https://localhost:8000/health
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    develop:
+      watch:
+        # the source is not mounted (unlike the legacy python setup), so
+        # rebuild the image on source changes instead of syncing files
+        - action: rebuild
+          path: ./Cargo.toml
+        - action: rebuild
+          path: ./src
+
+volumes:
+  xavier_configdb:

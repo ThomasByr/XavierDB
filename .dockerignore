@@ -1,0 +1,10 @@
+# build context hygiene: keep secrets and heavy artifacts out of the image
+.git
+.github
+.pi
+target
+node_modules
+.env
+config
+config.bak*
+authorized_keys.yml
