@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XavierDB · Dashboard</title>
+<link rel="icon" href="/dashboard/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/dashboard/styles.css">
+</head>
+<body>
+<!-- ===================== LOGIN VIEW ===================== -->
+<div id="login-view" class="login-view hidden">
+  <div class="login-card elevation-1">
+    <div class="login-logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="currentColor" opacity="0.9"/><path d="M7 12h10M12 7v10" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg>
+    </div>
+    <h1 class="login-title">XavierDB</h1>
+    <p class="login-subtitle">Admin dashboard</p>
+    <div class="field">
+      <label for="login-user">Username</label>
+      <input id="login-user" type="text" autocomplete="username" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="login-pass">Password</label>
+      <input id="login-pass" type="password" autocomplete="current-password">
+    </div>
+    <button id="login-btn" class="btn btn-primary btn-block">Sign in</button>
+    <p id="login-error" class="login-error"></p>
+  </div>
+</div>
+
+<!-- ===================== APP SHELL ===================== -->
+<div id="app" class="app hidden">
+  <header class="topbar elevation-0">
+    <button id="nav-toggle" class="icon-btn" aria-label="Toggle navigation">&#9776;</button>
+    <div class="topbar-title">XavierDB <span id="page-title" class="topbar-page"></span></div>
+    <div class="topbar-actions">
+      <span id="mongo-dot" class="dot" title="MongoDB status"></span>
+      <button id="refresh-btn" class="icon-btn" title="Refresh now">&#x21bb;</button>
+      <button id="theme-btn" class="icon-btn" title="Toggle theme">&#9681;</button>
+      <button id="logout-btn" class="btn btn-text">Logout</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <nav id="drawer" class="drawer elevation-1">
+      <a href="#/overview"    data-route="overview"    class="nav-item">&#9632; Overview</a>
+      <a href="#/clients"     data-route="clients"     class="nav-item">&#9673; Clients</a>
+      <a href="#/config"      data-route="config"      class="nav-item">&#9881; Config</a>
+      <a href="#/logs"        data-route="logs"        class="nav-item">&#9776; Logs</a>
+      <div class="drawer-footer" id="drawer-footer"></div>
+    </nav>
+
+    <main id="view" class="view"></main>
+  </div>
+</div>
+
+<div id="snackbar" class="snackbar"></div>
+<div id="dialog" class="dialog-backdrop hidden"><div class="dialog elevation-3" id="dialog-box"></div></div>
+
+<script src="/dashboard/app.js"></script>
+</body>
+</html>
