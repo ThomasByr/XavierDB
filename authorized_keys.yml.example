@@ -1,0 +1,61 @@
+# ============================================================================
+# authorized_keys.yml — credentials and permissions for XavierDB
+#
+# Copy this file to `authorized_keys.yml` and edit it. The server watches the
+# file and reloads it automatically when it changes (you can also click
+# "Reload from disk" in the dashboard). Dashboard edits are written back to
+# this file; YAML comments are only preserved until the first dashboard edit.
+#
+# STRUCTURE (one top-level entry per app_id):
+#
+#   <app_id>:                     # e.g. provider1 — auth token is shared by
+#                                 #   ALL name_ids under this app
+#     token_hash: "<PHC string>"  # Argon2id hash of the shared token.
+#                                 #   NEVER put the plaintext token here.
+#                                 #   Generate it from the dashboard
+#                                 #   (Clients -> app -> "Set token")
+#                                 #   or with any argon2 tool.
+#     allow:                      # app-level rights (inherited by every name)
+#       - actions: [GET, POST]    #   one of GET, POST, PUT, PATCH, DELETE
+#         databases: ["db1", "db*"]   # glob patterns; * and ? are wildcards
+#         collections: ["*"]          # default is ["*"]
+#     deny: []                    # app-level carve-outs (checked first)
+#     names:                      # per-name overrides (optional)
+#       <name_id>:                # e.g. user1 — created automatically the
+#                                 #   first time that name authenticates
+#         allow: [...]
+#         deny: [...]
+#
+# RESOLUTION for a request by name@app on (action, db, coll), first match wins:
+#   1. name.deny matches        -> DENIED
+#   2. name.allow matches       -> ALLOWED
+#   3. app.deny  matches        -> DENIED
+#   4. app.allow matches        -> ALLOWED
+#   5. otherwise                -> DENIED
+# A name with no rules inherits the app rules entirely.
+#
+# ============================================================================
+
+provider1:
+  # Demo credentials: token = "my-secret-app-token" (the README quick-start
+  # logs in with exactly this). The hash below is a REAL Argon2id PHC string
+  # for that token, so a stock install's quick-start actually works.
+  # Rotate it from the dashboard (Clients -> provider1 -> Set token).
+  token_hash: "$argon2id$v=19$m=65536,t=3,p=4$SQgmZRQTDYxOCiWSqCg51g$FEahDUTf8rem0dYwvyk+frD4blb8o3ASG8h41eWZBWo"
+  allow:
+    - actions: [GET, POST]
+      databases: ["db1", "db*"]
+      collections: ["*"]
+    - actions: [DELETE]
+      databases: ["db2"]
+      collections: ["coll_b"]
+  deny:
+    - actions: [DELETE]
+      databases: ["db1"]
+      collections: ["secret_*"]
+  names:
+    # user1 appeared automatically after its first successful login;
+    # its rules (if any) refine the app-level rights above.
+    user1:
+      allow: []
+      deny: []
