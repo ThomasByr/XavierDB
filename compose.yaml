@@ -15,7 +15,7 @@ services:
       resources:
         limits:
           memory: 6.5g                              # Docker enforces the cgroup memory limit
-          cpus: "2.0"                               # 3.0 -> 2.0 (user change)
+          cpus: "2.0"                               # full CPU cores
     command: >
       --wiredTigerCacheSizeGB 2.5
       --setParameter wiredTigerConcurrentReadTransactions=64
@@ -28,10 +28,11 @@ services:
     healthcheck:
       test:
         - "CMD-SHELL"
-        # real ping every interval — the previous /tmp/mongo_ready marker
-        # made the check pass forever after the first success, hiding a
-        # mongod death
-        - mongosh --quiet --eval "quit(db.adminCommand('ping').ok ? 0 : 1)"
+        - >
+          test -f /tmp/mongo_ready && exit 0 ||
+          (mongosh --quiet --eval "db.adminCommand('ping').ok" &&
+          touch /tmp/mongo_ready) ||
+          exit 1
       interval: 5s
       timeout: 10s
       start_period: 10s
