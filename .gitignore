@@ -4,3 +4,4 @@ authorized_keys.yml
 config
 config.bak*
 node_modules/
+src/assets/*.js
