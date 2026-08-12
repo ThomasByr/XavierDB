@@ -171,8 +171,9 @@ cargo test                       # 40 unit tests; XDB_TEST_MONGO_URI=mongodb://1
 ### 4.2 Docker (other machines only; NEVER tested here)
 
 ```bash
-docker compose up --build -d     # builds API image + starts MongoDB + API
+docker compose up --build -d     # builds API image + starts MongoDB + API (incremental: layer cache)
 docker compose watch             # rebuilds image on ./Cargo.toml or ./src changes
+docker compose build --no-cache api   # force a full rebuild when the cache is suspect
 docker compose logs api          # first-run dashboard password is printed here
 ```
 
