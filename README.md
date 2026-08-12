@@ -6,7 +6,7 @@ and a live admin dashboard.
 
 Built in Rust (axum + tokio + mongodb driver). No Python, no Node at runtime.
 
-```
+```txt
 POST /auth                                 client login  -> JWT (+ HttpOnly cookie)
 GET|POST|PUT|PATCH|DELETE  /q/<db>/<coll>  MongoDB proxy
 GET  /ls                                   list databases the caller may read (?db=<db> -> collections)
@@ -40,7 +40,16 @@ docker compose up --build -d
 ```
 
 This builds the API image (Rust server + dashboard assets) and starts it
-together with MongoDB, detached. State persists on the host:
+together with MongoDB, detached. Rebuilds are incremental — Docker reuses
+cached layers (Rust dependencies, `npm ci`), so only what changed gets
+rebuilt. If a stale image is ever suspected, force a full rebuild:
+
+```bash
+docker compose build --no-cache api   # no-cache is a `build` flag, not `up`
+docker compose up -d
+```
+
+State persists on the host:
 
 - MongoDB data → `${HOME}/data/xavier-mongo-db`
 - API state (`.env`, `config`, `config.bak`, `authorized_keys.yml`) → the repo
@@ -49,6 +58,7 @@ together with MongoDB, detached. State persists on the host:
   live (hot reload); `.env` needs `docker compose restart api`.
 
 First start:
+
 1. The API uses the repo's `.env` as-is. If `PASSWORD_HASH` is blank, the
    admin dashboard password is **generated and printed once** in the API
    container logs (it is hashed into `.env` — `USERNAME` defaults to `admin`):
@@ -78,6 +88,7 @@ cp authorized_keys.yml.example authorized_keys.yml
 ```
 
 First start:
+
 1. The admin dashboard password is **generated and printed once in the
    terminal** (it is hashed into `.env` — `USERNAME` defaults to `admin`).
 2. A default binary config file `config` is created.
@@ -85,39 +96,40 @@ First start:
 </details>
 
 Then:
+
 1. Open `http://127.0.0.1:8000/dashboard/` and log in.
 2. In the dashboard **Clients** view, **add app** → enter an `app_id` and a
    shared token (permissions are edited inline, per app or per name).
    (Or edit `authorized_keys.yml` by hand; the file hot-reloads.)
 3. Your clients authenticate:
 
-```bash
-curl -X POST http://127.0.0.1:8000/auth \
-  -H "Content-Type: application/json" \
-  -d '{"identifier":"user1@provider1","token":"my-secret-app-token"}'
-# -> {"token":"eyJ...","token_type":"Bearer","expires_in":5400,...}
-```
+   ```bash
+   curl -X POST http://127.0.0.1:8000/auth \
+     -H "Content-Type: application/json" \
+     -d '{"identifier":"user1@provider1","token":"my-secret-app-token"}'
+   # -> {"token":"eyJ...","token_type":"Bearer","expires_in":5400,...}
+   ```
 
 4. Use the token on `/q/`:
 
-```bash
-curl "http://127.0.0.1:8000/q/db1/items?limit=10&sort=%7B%22n%22%3A1%7D" \
-  -H "Authorization: Bearer eyJ..."
-```
+   ```bash
+   curl "http://127.0.0.1:8000/q/db1/items?limit=10&sort=%7B%22n%22%3A1%7D" \
+     -H "Authorization: Bearer eyJ..."
+   ```
 
 The token is also returned as an HttpOnly cookie, so browsers can just log in
 once per session.
 
 ## Files
 
-| file | purpose |
-|---|---|
-| `.env.example` | documented template — copy it to `.env` |
-| `.env` | host/port, MongoDB URI, workers, TLS paths, dashboard credentials |
-| `authorized_keys.yml` | app credentials (Argon2id hashes) + permissions |
-| `config` | binary settings file (dashboard-editable, undo/redo history) |
-| `config.bak…` | automatic backups of the config file |
-| `authorized_keys.yml.example` | documented permissions template |
+| file                          | purpose                                                           |
+| ----------------------------- | ----------------------------------------------------------------- |
+| `.env.example`                | documented template — copy it to `.env`                           |
+| `.env`                        | host/port, MongoDB URI, workers, TLS paths, dashboard credentials |
+| `authorized_keys.yml`         | app credentials (Argon2id hashes) + permissions                   |
+| `config`                      | binary settings file (dashboard-editable, undo/redo history)      |
+| `config.bak…`                 | automatic backups of the config file                              |
+| `authorized_keys.yml.example` | documented permissions template                                   |
 
 See `docs/API_REFERENCE.md`, `docs/CONFIGURATION.md`, `docs/ADMIN_GUIDE.md` for details.
 
@@ -125,7 +137,7 @@ See `docs/API_REFERENCE.md`, `docs/CONFIGURATION.md`, `docs/ADMIN_GUIDE.md` for 
 
 ```bash
 docker compose watch      # rebuilds the API image on Cargo.toml/src changes
-# or, manually:
+# or, manually (incremental; clean rebuild: docker compose build --no-cache api):
 docker compose up --build -d
 ```
 
