@@ -52,14 +52,14 @@ services:
       - MONGODB_URI=mongodb://xavierdb:27017       # mongo service name; default localhost won't work
     working_dir: /app
     volumes:
-      - ".:/app"                                    # repo root = single source of truth: .env, config, config.bak, authorized_keys.yml
+      - ".:/app"                                   # repo root = single source of truth: .env, config, config.bak, authorized_keys.yml
     ports:
-      - "8000:8000"                                 # forward the API on port 8000
+      - "8000:8000"                                # forward the API on port 8000
     deploy:
       resources:
         limits:
           memory: 1g
-          cpus: "2.0"                               # 1.0 -> 2.0 (user change)
+          cpus: "2.0"
     memswap_limit: 2g
     depends_on:
       xavierdb:
