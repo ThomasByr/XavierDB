@@ -16,7 +16,7 @@ fields always yields the JSON error shape above.
 
 | HTTP | code | meaning |
 |---|---|---|
-| 400 | `BAD_REQUEST` / `INVALID_FILTER` / `INVALID_SORT` / `INVALID_LIMIT` / `INVALID_CURSOR` | malformed input |
+| 400 | `BAD_REQUEST` / `INVALID_FILTER` / `INVALID_SORT` / `INVALID_LIMIT` / `INVALID_CURSOR` / `INVALID_PROJECTION` | malformed input |
 | 401 | `UNAUTHORIZED` | missing / invalid / expired JWT or dashboard session |
 | 403 | `FORBIDDEN` | no permission for this operation |
 | 403 | `BLOCKED` | the name_id or app_id is blocked (dashboard) |
@@ -84,12 +84,24 @@ against the current `authorized_keys.yml`.
 |---|---|
 | `filter` | URL-encoded JSON, MongoDB filter syntax, e.g. `{"status":"active","n":{"$gt":5}}`. Extended JSON is accepted (`{"_id":{"$oid":"665f…"}}`, `$date`, `$numberLong`, `$regex` (+ optional `$options`), `$timestamp`, …). Server-side script operators (`$where`, `$function`) are **rejected** (400 `INVALID_FILTER`) — they execute JavaScript on the database server. |
 | `sort` | URL-encoded JSON `{"field":1,"other":-1}` (1 asc, -1 desc). `_id` is appended automatically as tiebreaker. |
+| `projection` | URL-encoded JSON object of top-level fields, e.g. `{"name":1}` (include) or `{"secret":0}` (exclude). Values must be `1`/`0`/`true`/`false`; mixing include and exclude is rejected except for `_id` (400 `INVALID_PROJECTION`). `_id:0` is allowed; an empty `{}` is a no-op. |
 | `limit` | positive integer. If omitted, the server applies its adaptive limit. |
 | `cursor` | opaque token from a previous response. Tampered cursors (wrong collection, wrong sort, unparseable page values) are rejected with `INVALID_CURSOR`. |
 
 The server caps `limit` at the **adaptive limit** of the caller's app
 (dashboard → Rate limit). When the cap bites, `truncated` is `true` and a
 `next_cursor` is returned so the client can keep iterating page by page.
+
+`projection` selects a subset of fields per document. The response documents
+contain only the requested fields when present (documents lacking a field
+simply omit it — `{}` is a valid projected document). Sort fields and `_id`
+are always kept internally for keyset pagination and stripped from the
+output unless requested, so `{"name":1}` works with any `sort` and with
+`_id:0`. Dotted/nested paths (`{"a.b":1}`) and `$`-operator values
+(`$meta`, `$slice`, `$elemMatch`) are rejected (400 `INVALID_PROJECTION`) —
+top-level fields only. Cursors are projection-independent: reusing a cursor
+with a different `projection` is safe.
+
 Cursors are keyset-based (no `skip`), so pagination stays fast and consistent
 even while documents change. Keyset pagination handles mixed-type and
 missing sort fields correctly (null/type boundaries are continued via `$type`
@@ -278,6 +290,14 @@ async function main() {
   console.log(`query: ${page.data.count} doc(s), truncated=${page.data.truncated}, limit_applied=${page.data.limit_applied}`);
   for (const doc of page.data.documents) console.log(`  item n=${doc.n}`);
 
+  // 4b. Projection: request only the fields you need (top-level fields only).
+  const names = await api(
+    "/q/db1/items?limit=5&projection=" + encodeURIComponent(JSON.stringify({ name: 1 })),
+    { bearer }
+  );
+  for (const doc of names.data.documents)
+    console.log(`  name=${doc.name} (fields: ${Object.keys(doc).join(",")})`);
+
   // 5. Write operations. data is applied as MongoDB $set by the server.
   //    With a read-only credential each call returns 403 FORBIDDEN and is
   //    reported without crashing; with write permission they all succeed.
@@ -451,6 +471,12 @@ def main():
     print("query: %d doc(s), truncated=%s, limit_applied=%d" % (page["count"], page["truncated"], page["limit_applied"]))
     for doc in page["documents"]:
         print("  item n=%s" % doc["n"])
+
+    # 4b. Projection: request only the fields you need (top-level fields only).
+    proj_query = "/q/db1/items?limit=5&projection=" + urllib.parse.quote(json.dumps({"name": 1}), safe="")
+    _, names = api(proj_query, bearer=bearer)
+    for doc in names["documents"]:
+        print("  name=%s (fields: %s)" % (doc.get("name"), ",".join(sorted(doc))))
 
     # 5. Write operations. data is applied as MongoDB $set by the server.
     #    With a read-only credential each call returns 403 FORBIDDEN and is

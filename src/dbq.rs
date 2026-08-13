@@ -322,6 +322,187 @@ pub fn sort_document(sort: &[(String, i8)]) -> Document {
 }
 
 // ---------------------------------------------------------------------------
+// Projection
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProjectionStyle {
+    Include,
+    Exclude,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Projection {
+    pub style: ProjectionStyle,
+    pub fields: std::collections::BTreeSet<String>,
+    /// `_id: 0` was requested
+    pub exclude_id: bool,
+    /// `_id: 1` was requested (include style only)
+    pub include_id: bool,
+}
+
+/// Parse a client projection spec: `{"a": 1, "b": 0}`. Returns `None` for
+/// an empty object (no-op). Values must be 0/1/true/false; mixing inclusion
+/// and exclusion is rejected except for `_id`; dotted (`a.b`) and
+/// `$`-prefixed (`$meta`, `$slice`, ...) keys are refused — only top-level
+/// fields are supported (v1).
+pub fn parse_projection(v: &Value) -> Result<Option<Projection>, ApiError> {
+    let Value::Object(m) = v else {
+        return Err(ApiError::new(
+            ApiErrorKind::InvalidProjection,
+            "projection must be a JSON object",
+        ));
+    };
+    if m.is_empty() {
+        return Ok(None);
+    }
+    let mut style: Option<ProjectionStyle> = None;
+    let mut fields = std::collections::BTreeSet::new();
+    let mut exclude_id = false;
+    let mut include_id = false;
+    for (k, val) in m {
+        if k.contains('.') {
+            return Err(ApiError::new(
+                ApiErrorKind::InvalidProjection,
+                "projection of nested fields (dotted keys) is not supported",
+            ));
+        }
+        if k.starts_with('$') {
+            return Err(ApiError::new(
+                ApiErrorKind::InvalidProjection,
+                format!("projection operator {k:?} is not supported"),
+            ));
+        }
+        let incl = match val {
+            Value::Bool(b) => *b,
+            Value::Number(n) if n.as_i64() == Some(1) => true,
+            Value::Number(n) if n.as_i64() == Some(0) => false,
+            _ => {
+                return Err(ApiError::new(
+                    ApiErrorKind::InvalidProjection,
+                    "projection values must be 0, 1, true or false",
+                ));
+            }
+        };
+        if k == "_id" {
+            if incl {
+                include_id = true;
+            } else {
+                exclude_id = true;
+            }
+            continue; // _id:1 is the default anyway, _id:0 handled at strip time
+        }
+        match (&style, incl) {
+            (None, _) => {
+                style = Some(if incl {
+                    ProjectionStyle::Include
+                } else {
+                    ProjectionStyle::Exclude
+                })
+            }
+            (Some(ProjectionStyle::Include), true) | (Some(ProjectionStyle::Exclude), false) => {}
+            _ => {
+                return Err(ApiError::new(
+                    ApiErrorKind::InvalidProjection,
+                    "cannot mix inclusion and exclusion in a projection (except _id)",
+                ));
+            }
+        }
+        fields.insert(k.clone());
+    }
+    Ok(Some(Projection {
+        style: style.unwrap_or(ProjectionStyle::Include),
+        fields,
+        exclude_id,
+        include_id,
+    }))
+}
+
+/// The projection sent to Mongo: client fields plus everything the keyset
+/// machinery needs — every sort field and `_id` — so boundaries and the
+/// array-sort guard keep working. Exclude style: sort fields and `_id` are
+/// removed from the exclusion set (Mongo keeps returning them); the
+/// client-side strip (`projection_strip_fields`) hides them from the output.
+/// Returns `None` when no projection is needed at all.
+pub fn projection_document(proj: Option<&Projection>, sort: &[(String, i8)]) -> Option<Document> {
+    let proj = proj?;
+    let mut d = Document::new();
+    match proj.style {
+        ProjectionStyle::Include => {
+            for f in &proj.fields {
+                d.insert(f.clone(), 1i32);
+            }
+            for (f, _) in sort {
+                if f != "_id" {
+                    d.insert(f.clone(), 1i32);
+                }
+            }
+            d.insert("_id", 1i32);
+        }
+        ProjectionStyle::Exclude => {
+            for f in &proj.fields {
+                d.insert(f.clone(), 0i32);
+            }
+            for (f, _) in sort {
+                if f != "_id" {
+                    d.remove(f);
+                }
+            }
+            d.remove("_id");
+            if d.is_empty() {
+                return None;
+            }
+        }
+    }
+    Some(d)
+}
+
+/// Top-level keys to strip from output documents: in include style, the sort
+/// fields + `_id` that were force-added but not requested; in exclude style,
+/// the client's exclusions plus `_id` when `_id:0` was requested.
+pub fn projection_strip_fields(
+    proj: Option<&Projection>,
+    sort: &[(String, i8)],
+) -> std::collections::BTreeSet<String> {
+    let mut strip = std::collections::BTreeSet::new();
+    let Some(proj) = proj else {
+        return strip;
+    };
+    match proj.style {
+        ProjectionStyle::Include => {
+            for (f, _) in sort {
+                if f != "_id" && !proj.fields.contains(f) {
+                    strip.insert(f.clone());
+                }
+            }
+            if !proj.include_id {
+                strip.insert("_id".into());
+            }
+        }
+        ProjectionStyle::Exclude => {
+            strip = proj.fields.clone();
+            if proj.exclude_id {
+                strip.insert("_id".into());
+            }
+        }
+    }
+    strip
+}
+
+/// Serialize a document to JSON, skipping the given top-level keys (the
+/// projection strip). Values are encoded by `bson_to_json` unchanged.
+pub fn bson_to_json_projected(doc: &Document, strip: &std::collections::BTreeSet<String>) -> Value {
+    let mut m = serde_json::Map::new();
+    for (k, v) in doc {
+        if strip.contains(k) {
+            continue;
+        }
+        m.insert(k.clone(), bson_to_json(v));
+    }
+    Value::Object(m)
+}
+
+// ---------------------------------------------------------------------------
 // Cursor
 // ---------------------------------------------------------------------------
 
@@ -564,14 +745,18 @@ pub async fn find_page(
     filter: Document,
     sort: &[(String, i8)],
     limit: u32,
+    projection: Option<Document>,
     _user_cursor: Option<&Cursor>,
 ) -> Result<(Vec<Document>, bool, Option<Document>), ApiError> {
     let collection = state.mongo.database(db).collection::<Document>(coll);
-    let mut cursor = collection
+    let mut find = collection
         .find(filter)
         .sort(sort_document(sort))
-        .limit(limit as i64 + 1)
-        .await?;
+        .limit(limit as i64 + 1);
+    if let Some(p) = projection {
+        find = find.projection(p);
+    }
+    let mut cursor = find.await?;
     let mut docs = Vec::with_capacity(limit as usize + 1);
     while let Some(d) = cursor.try_next().await? {
         docs.push(d);
@@ -1083,6 +1268,192 @@ mod tests {
         assert_eq!(j, serde_json::json!({"$numberDecimal": "12345.6789"}));
     }
 
+    #[test]
+    fn parse_projection_rules() {
+        use std::collections::BTreeSet;
+        let parse = |s: &str| {
+            let v: Value = serde_json::from_str(s).unwrap();
+            parse_projection(&v)
+        };
+        // valid include / exclude / boolean values / _id:0 alone
+        let inc = parse(r#"{"a":1,"b":true}"#).unwrap().unwrap();
+        assert_eq!(inc.style, ProjectionStyle::Include);
+        assert_eq!(inc.fields, BTreeSet::from(["a".into(), "b".into()]));
+        assert!(!inc.exclude_id && !inc.include_id);
+        let exc = parse(r#"{"a":0,"c":false}"#).unwrap().unwrap();
+        assert_eq!(exc.style, ProjectionStyle::Exclude);
+        assert_eq!(exc.fields, BTreeSet::from(["a".into(), "c".into()]));
+        let id0 = parse(r#"{"_id":0}"#).unwrap().unwrap();
+        assert!(id0.exclude_id && id0.fields.is_empty());
+        let id1 = parse(r#"{"a":1,"_id":1}"#).unwrap().unwrap();
+        assert!(id1.include_id && !id1.exclude_id);
+        // empty object is a no-op
+        assert!(parse(r#"{}"#).unwrap().is_none());
+        // rejections
+        assert!(parse(r#"[1,2]"#).is_err());
+        assert!(parse(r#""a""#).is_err());
+        assert!(parse(r#"{"a":1,"b":0}"#).is_err()); // mixed
+        assert!(parse(r#"{"a":2}"#).is_err());
+        assert!(parse(r#"{"a":"1"}"#).is_err());
+        assert!(parse(r#"{"a":null}"#).is_err());
+        assert!(parse(r#"{"a":{}}"#).is_err());
+        assert!(parse(r#"{"a.b":1}"#).is_err()); // dotted
+        assert!(parse(r#"{"$meta":"textScore"}"#).is_err()); // operator key
+        assert!(parse(r#"{"a":{"$slice":2}}"#).is_err());
+        // _id may appear in either style without mixing errors
+        assert!(parse(r#"{"a":0,"_id":1}"#).unwrap().is_some());
+    }
+
+    #[test]
+    fn projection_union_and_strip() {
+        use std::collections::BTreeSet;
+        let parse = |s: &str| {
+            let v: Value = serde_json::from_str(s).unwrap();
+            parse_projection(&v).unwrap()
+        };
+        let sort: Vec<(String, i8)> = vec![("a".into(), 1), ("_id".into(), 1)];
+
+        // include {b}: Mongo sees b + sort field a + _id; strip hides a and _id
+        let p = parse(r#"{"b":1}"#);
+        assert_eq!(
+            projection_document(p.as_ref(), &sort).unwrap(),
+            doc! { "b": 1i32, "a": 1i32, "_id": 1i32 }
+        );
+        assert_eq!(
+            projection_strip_fields(p.as_ref(), &sort),
+            BTreeSet::from(["a".into(), "_id".into()])
+        );
+
+        // include {a, _id}: nothing stripped
+        let p = parse(r#"{"a":1,"_id":1}"#);
+        assert_eq!(projection_strip_fields(p.as_ref(), &sort), BTreeSet::new());
+
+        // exclude {b} where b is NOT a sort field: Mongo doc keeps {b:0}; strip {b}
+        let p = parse(r#"{"b":0}"#);
+        assert_eq!(
+            projection_document(p.as_ref(), &sort).unwrap(),
+            doc! { "b": 0i32 }
+        );
+        assert_eq!(
+            projection_strip_fields(p.as_ref(), &sort),
+            BTreeSet::from(["b".into()])
+        );
+
+        // exclude {a, _id:0} where a IS the sort field: a and _id are removed
+        // from the Mongo exclusion so the keyset keeps working (collapses to
+        // None — Mongo gets no projection); both stripped from client output
+        let p = parse(r#"{"a":0,"_id":0}"#);
+        assert!(projection_document(p.as_ref(), &sort).is_none());
+        assert_eq!(
+            projection_strip_fields(p.as_ref(), &sort),
+            BTreeSet::from(["a".into(), "_id".into()])
+        );
+
+        // no projection at all
+        assert!(projection_document(None, &sort).is_none());
+        assert!(projection_strip_fields(None, &sort).is_empty());
+    }
+
+    #[test]
+    fn projected_serialization() {
+        use std::collections::BTreeSet;
+        let doc = doc! {
+            "a": 1i32,
+            "b": "x",
+            "nested": { "deep": 2i32, "keep": true },
+            "_id": ObjectId::from_bytes([0; 12]),
+        };
+        // empty strip == full bson_to_json output
+        let full = bson_to_json_projected(&doc, &BTreeSet::new());
+        assert_eq!(full, bson_to_json(&Bson::Document(doc.clone())));
+        // strip top-level keys; nested content untouched
+        let out = bson_to_json_projected(&doc, &BTreeSet::from(["a".into(), "_id".into()]));
+        let o = out.as_object().unwrap();
+        assert!(!o.contains_key("a") && !o.contains_key("_id"));
+        assert_eq!(o["b"], "x");
+        assert_eq!(o["nested"], serde_json::json!({ "deep": 2, "keep": true }));
+    }
+
+    /// Simulate Mongo's server-side projection over a doc, then apply the
+    /// client strip — the visible fields must be exactly source ∩ expected.
+    #[test]
+    fn projection_pipeline_visible_fields() {
+        use std::collections::BTreeSet;
+        let parse = |s: &str| {
+            let v: Value = serde_json::from_str(s).unwrap();
+            parse_projection(&v).unwrap()
+        };
+        let sort: Vec<(String, i8)> = vec![("a".into(), 1), ("_id".into(), 1)];
+        let source = doc! { "a": 1i32, "b": "x", "c": 3.5, "extra": true, "_id": ObjectId::from_bytes([0; 12]) };
+
+        let cases: Vec<(&str, BTreeSet<String>)> = vec![
+            // include {b}: visible = {b} (sort field a + _id hidden)
+            (r#"{"b":1}"#, BTreeSet::from(["b".into()])),
+            // include {b, _id:1}: visible = {b, _id}
+            (
+                r#"{"b":1,"_id":1}"#,
+                BTreeSet::from(["b".into(), "_id".into()]),
+            ),
+            // include {_id:0} alone: Mongo semantics -> no fields at all
+            (r#"{"_id":0}"#, BTreeSet::new()),
+            // exclude {c, _id:0}: visible = {a, b, extra}
+            (
+                r#"{"c":0,"_id":0}"#,
+                BTreeSet::from(["a".into(), "b".into(), "extra".into()]),
+            ),
+            // exclude {b} (non-sort field): visible = {a, c, extra, _id}
+            (
+                r#"{"b":0}"#,
+                BTreeSet::from(["a".into(), "c".into(), "extra".into(), "_id".into()]),
+            ),
+            // no projection: everything
+            (
+                "{}",
+                BTreeSet::from([
+                    "a".into(),
+                    "b".into(),
+                    "c".into(),
+                    "extra".into(),
+                    "_id".into(),
+                ]),
+            ),
+        ];
+        for (spec, expected) in cases {
+            let proj = parse(spec);
+            let mongo = projection_document(proj.as_ref(), &sort);
+            // apply the Mongo projection like the server would
+            let mut sim = Document::new();
+            match &mongo {
+                None => sim = source.clone(),
+                Some(m) => {
+                    let is_exclude = m.values().any(|v| matches!(v, Bson::Int32(0)));
+                    if is_exclude {
+                        for (k, v) in &source {
+                            if !m.contains_key(k) {
+                                sim.insert(k.clone(), v.clone());
+                            }
+                        }
+                    } else {
+                        for (k, v) in &source {
+                            if m.contains_key(k) {
+                                sim.insert(k.clone(), v.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            let strip = projection_strip_fields(proj.as_ref(), &sort);
+            let visible = bson_to_json_projected(&sim, &strip);
+            let visible_keys: BTreeSet<String> =
+                visible.as_object().unwrap().keys().cloned().collect();
+            assert_eq!(visible_keys, expected, "spec {spec}: visible keys mismatch");
+            // and values survived (spot-check b)
+            if spec == r#"{"b":1}"# {
+                assert_eq!(visible["b"], "x");
+            }
+        }
+    }
+
     /// Integration test: keyset pagination over mixed-type / missing-field
     /// data must return EXACTLY the same _id sequence as a single full scan,
     /// for both directions and several limits. Runs only when
@@ -1371,6 +1742,173 @@ mod tests {
             assert_eq!(
                 array_failures, 0,
                 "array-field pagination diverged silently (must error or be exact)"
+            );
+
+            // phase 3: projection must not disturb pagination — the _id walk
+            // stays identical to the unprojected baseline AND the visible
+            // fields are exactly source ∩ expected for every variant
+            let coll3 = db.collection::<Document>(&format!("{coll_name}_proj"));
+            coll3.drop().await.unwrap();
+            let mut docs3 = Vec::new();
+            for i in 0..24u32 {
+                let mut d = Document::new();
+                d.insert("a", Bson::Int32((i % 7) as i32));
+                d.insert("b", Bson::String(format!("s{}", i % 5)));
+                if i % 3 != 0 {
+                    d.insert("c", Bson::Double(i as f64 / 2.0)); // c sometimes missing
+                }
+                if i % 4 == 0 {
+                    d.insert("x", Bson::Boolean(true)); // extra field
+                }
+                d.insert(
+                    "_id",
+                    bson::oid::ObjectId::from_bytes([
+                        0, 0, 0, 0, 0, 0, 0, (i >> 24) as u8, (i >> 16) as u8, (i >> 8) as u8,
+                        i as u8, 0,
+                    ]),
+                );
+                docs3.push(d);
+            }
+            coll3.insert_many(&docs3).await.unwrap();
+            let proj_variants: Vec<(&str, Option<Projection>)> = vec![
+                ("none", None),
+                (
+                    "include_b",
+                    parse_projection(&serde_json::json!({ "b": 1 })).unwrap(),
+                ),
+                (
+                    "exclude_c_id",
+                    parse_projection(&serde_json::json!({ "c": 0, "_id": 0 })).unwrap(),
+                ),
+            ];
+            let mut proj_failures = 0;
+            for raw in [
+                vec![("a".into(), 1)],
+                vec![("a".into(), -1), ("b".into(), 1)],
+            ] {
+                let sort = normalize_sort(&raw);
+                for limit in [1u32, 5] {
+                    // baseline: full scan keeping the full documents
+                    let mut cur = coll3
+                        .find(Document::new())
+                        .sort(sort_document(&sort))
+                        .limit(200)
+                        .await
+                        .unwrap();
+                    let mut baseline: Vec<(String, Document)> = Vec::new();
+                    while let Some(d) = cur.try_next().await.unwrap() {
+                        baseline.push((d.get_object_id("_id").unwrap().to_hex(), d));
+                    }
+                    for (label, proj) in &proj_variants {
+                        let mongo_proj = projection_document(proj.as_ref(), &sort);
+                        let strip = projection_strip_fields(proj.as_ref(), &sort);
+                        let all_keys: std::collections::BTreeSet<String> = baseline
+                            .iter()
+                            .flat_map(|(_, d)| d.keys().cloned())
+                            .collect();
+                        let expected: std::collections::BTreeSet<String> = match proj {
+                            None => all_keys,
+                            Some(p) => match p.style {
+                                ProjectionStyle::Include => {
+                                    let mut s = p.fields.clone();
+                                    if p.include_id {
+                                        s.insert("_id".into());
+                                    }
+                                    s
+                                }
+                                ProjectionStyle::Exclude => {
+                                    let mut s = all_keys;
+                                    for f in &p.fields {
+                                        s.remove(f);
+                                    }
+                                    if p.exclude_id {
+                                        s.remove("_id");
+                                    }
+                                    s
+                                }
+                            },
+                        };
+                        // paginated walk mirroring the server, projection applied
+                        let mut got = Vec::new();
+                        let mut cursor: Option<Cursor> = None;
+                        loop {
+                            let filter = build_filter(None, cursor.as_ref()).unwrap();
+                            let mut f = coll3
+                                .find(filter)
+                                .sort(sort_document(&sort))
+                                .limit(limit as i64 + 1);
+                            if let Some(mp) = &mongo_proj {
+                                f = f.projection(mp.clone());
+                            }
+                            let mut cur = f.await.unwrap();
+                            let mut page = Vec::new();
+                            while let Some(d) = cur.try_next().await.unwrap() {
+                                page.push(d);
+                                if page.len() as u32 > limit {
+                                    break;
+                                }
+                            }
+                            let has_more = page.len() as u32 > limit;
+                            if has_more {
+                                page.truncate(limit as usize);
+                            }
+                            for d in &page {
+                                let id = d.get_object_id("_id").unwrap().to_hex();
+                                got.push(id.clone());
+                                // visible fields must be exactly source ∩ expected
+                                let src = &baseline.iter().find(|(h, _)| *h == id).unwrap().1;
+                                let visible = bson_to_json_projected(d, &strip);
+                                let vis_keys: std::collections::BTreeSet<String> =
+                                    visible.as_object().unwrap().keys().cloned().collect();
+                                let src_keys: std::collections::BTreeSet<String> =
+                                    src.keys().cloned().collect();
+                                let want: std::collections::BTreeSet<String> =
+                                    src_keys.intersection(&expected).cloned().collect();
+                                if vis_keys != want {
+                                    proj_failures += 1;
+                                    eprintln!(
+                                        "PROJECTION FIELD MISMATCH variant={label} sort={sort:?} limit={limit}: visible={vis_keys:?} want={want:?}"
+                                    );
+                                }
+                            }
+                            if has_more {
+                                let last = page.last().unwrap();
+                                let mut vals = Vec::new();
+                                for (f, _) in &sort {
+                                    vals.push(
+                                        bson_to_cursor_json(
+                                            &last.get(f).cloned().unwrap_or(Bson::Null),
+                                        )
+                                        .unwrap(),
+                                    );
+                                }
+                                cursor = Some(Cursor {
+                                    v: 1,
+                                    id: "t".into(),
+                                    db: "xdb_test".into(),
+                                    coll: format!("{coll_name}_proj"),
+                                    sort: sort.clone(),
+                                    last: vals,
+                                });
+                            } else {
+                                break;
+                            }
+                        }
+                        let want_ids: Vec<String> =
+                            baseline.iter().map(|(h, _)| h.clone()).collect();
+                        if got != want_ids {
+                            proj_failures += 1;
+                            eprintln!(
+                                "PROJECTION PAGINATION MISMATCH variant={label} sort={sort:?} limit={limit}"
+                            );
+                        }
+                    }
+                }
+            }
+            coll3.drop().await.unwrap();
+            assert_eq!(
+                proj_failures, 0,
+                "projection changed pagination order or visible fields"
             );
         });
     }

@@ -286,6 +286,7 @@ pub struct FindParams {
     pub limit: Option<u32>,
     pub sort: Option<String>,
     pub cursor: Option<String>,
+    pub projection: Option<String>,
 }
 
 pub async fn find_docs(
@@ -342,6 +343,14 @@ pub async fn find_docs(
         None => dbq::normalize_sort(&sort_raw),
     };
 
+    // --- projection ---
+    let projection = match &params.projection {
+        Some(s) => parse_projection_json(s)?,
+        None => None,
+    };
+    let mongo_projection = dbq::projection_document(projection.as_ref(), &sort);
+    let strip = dbq::projection_strip_fields(projection.as_ref(), &sort);
+
     // --- adaptive limit ---
     let enforced = enforced_limit(&state, &app);
     let effective = requested.min(enforced);
@@ -355,6 +364,7 @@ pub async fn find_docs(
         full_filter,
         &sort,
         effective,
+        mongo_projection,
         cursor.as_ref(),
     )
     .await?;
@@ -385,7 +395,7 @@ pub async fn find_docs(
 
     let out: Vec<Value> = docs
         .iter()
-        .map(|d| dbq::bson_to_json(&bson::Bson::Document(d.clone())))
+        .map(|d| dbq::bson_to_json_projected(d, &strip))
         .collect();
     record_request(&state, &claims, started);
     Ok(Json(json!({
@@ -638,6 +648,16 @@ fn parse_sort_json(s: &str) -> Result<Vec<(String, i8)>, ApiError> {
     let v: Value = serde_json::from_str(s)
         .map_err(|e| ApiError::new(ApiErrorKind::InvalidSort, format!("invalid sort JSON: {e}")))?;
     dbq::parse_sort(&v)
+}
+
+fn parse_projection_json(s: &str) -> Result<Option<dbq::Projection>, ApiError> {
+    let v: Value = serde_json::from_str(s).map_err(|e| {
+        ApiError::new(
+            ApiErrorKind::InvalidProjection,
+            format!("invalid projection JSON: {e}"),
+        )
+    })?;
+    dbq::parse_projection(&v)
 }
 
 fn requested_limit(limit: &Option<u32>, state: &AppState, app: &str) -> u32 {

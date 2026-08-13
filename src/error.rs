@@ -17,6 +17,8 @@ pub enum ApiErrorKind {
     InvalidSort,
     /// 400 — invalid limit value
     InvalidLimit,
+    /// 400 — invalid projection syntax
+    InvalidProjection,
     /// 401 — missing / invalid / expired credentials
     Unauthorized,
     /// 403 — identifier is blocked
@@ -40,9 +42,8 @@ impl ApiErrorKind {
     pub fn status(&self) -> StatusCode {
         use ApiErrorKind::*;
         match self {
-            BadRequest | InvalidCursor | InvalidFilter | InvalidSort | InvalidLimit => {
-                StatusCode::BAD_REQUEST
-            }
+            BadRequest | InvalidCursor | InvalidFilter | InvalidSort | InvalidLimit
+            | InvalidProjection => StatusCode::BAD_REQUEST,
             Unauthorized => StatusCode::UNAUTHORIZED,
             Blocked | Forbidden => StatusCode::FORBIDDEN,
             NotFound => StatusCode::NOT_FOUND,
@@ -61,6 +62,7 @@ impl ApiErrorKind {
             InvalidFilter => "INVALID_FILTER",
             InvalidSort => "INVALID_SORT",
             InvalidLimit => "INVALID_LIMIT",
+            InvalidProjection => "INVALID_PROJECTION",
             Unauthorized => "UNAUTHORIZED",
             Blocked => "BLOCKED",
             Forbidden => "FORBIDDEN",
