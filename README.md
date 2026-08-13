@@ -130,7 +130,7 @@ once per session.
 | `config`                      | binary settings file (dashboard-editable, undo/redo history)      |
 | `config.bak…`                 | automatic backups of the config file                              |
 | `authorized_keys.yml.example` | documented permissions template                                   |
-| `examples/`                  | standalone crate with 8 runnable client examples (see its README)          |
+| `examples/`                   | standalone crate with 8 runnable client examples (see its README) |
 
 See `docs/API_REFERENCE.md`, `docs/CONFIGURATION.md`, `docs/ADMIN_GUIDE.md` for details.
 
