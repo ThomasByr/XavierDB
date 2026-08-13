@@ -45,7 +45,7 @@ services:
     # rust:1-slim-bookworm (see Dockerfile); compose names it <project>-api.
     build: .
     container_name: XavierAPI
-    user: ":"
+    user: "$UID:$GID"                              # run as the host user, not root
     environment:
       - TZ=Europe/Paris
       - HOST=0.0.0.0                               # default 127.0.0.1 is unreachable inside a container
