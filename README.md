@@ -130,8 +130,27 @@ once per session.
 | `config`                      | binary settings file (dashboard-editable, undo/redo history)      |
 | `config.bak…`                 | automatic backups of the config file                              |
 | `authorized_keys.yml.example` | documented permissions template                                   |
+| `examples/`                  | standalone crate with 8 runnable client examples (see its README)          |
 
 See `docs/API_REFERENCE.md`, `docs/CONFIGURATION.md`, `docs/ADMIN_GUIDE.md` for details.
+
+## Examples
+
+Runnable Rust client examples live in `examples/` — a standalone crate with
+its own lockfile, so they never add dependencies to the server. Each example
+is a pair: a `setup_*` program that uses the **dashboard API** to create the
+app id + permissions, and a showcase program that exercises the **client
+API**. They need a running server and the dashboard password:
+
+```bash
+cargo run --manifest-path examples/Cargo.toml --bin setup_projection -- \
+    --admin-pass <dashboard-password>
+cargo run --manifest-path examples/Cargo.toml --bin projection
+```
+
+The full list — projection, pagination, query, write, ls, errors, health,
+pernames — with per-example launch commands and options is in
+`examples/README.md`.
 
 ## Development
 
