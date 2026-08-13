@@ -79,6 +79,9 @@ XavierDB/
 ├── .gitignore                   # /target, .env, authorized_keys.yml, config, config.bak*, node_modules/
 ├── Cargo.toml / Cargo.lock      # Rust workspace (axum, tokio, mongodb, rustls/aws-lc-sys, argon2, notify, serde_yaml…)
 ├── package.json / package-lock.json   # esbuild devDependency only (dashboard TS -> JS)
+├── examples/                      # standalone crate: 8 runnable client examples (see examples/README.md)
+│   ├── Cargo.toml / Cargo.lock    #   own deps (ureq + serde_json only), own lockfile
+│   └── src/bin/                   #   per example: setup_<name>.rs (dashboard API) + <name>.rs (client API)
 ├── .env.example                 # documented env template (copy to .env)
 ├── authorized_keys.yml.example  # documented permissions template
 ├── src/
@@ -162,6 +165,11 @@ cargo test                       # 40 unit tests; XDB_TEST_MONGO_URI=mongodb://1
                                  #   additionally runs the Mongo-backed pagination-equivalence test
 ./target/debug/XavierDB          # from repo root; cwd-relative state files; no CLI args
                                  # (Windows: ./target/debug/XavierDB.exe)
+
+# Examples (own crate, own lockfile — independent of the server build):
+cargo build --manifest-path examples/Cargo.toml
+cargo run --manifest-path examples/Cargo.toml --bin setup_projection -- --admin-pass <dashboard-password>
+cargo run --manifest-path examples/Cargo.toml --bin projection
 ```
 
 - Requires a running MongoDB (default `mongodb://localhost:27017`). This
@@ -232,8 +240,14 @@ browser (API contracts verified via curl only — see §9 gaps).
 
 ### 5.3 `/q/<db>/<coll>` proxy (routes_q.rs)
 
-- GET: params `filter`/`sort` = URL-encoded JSON (extended JSON ok), `limit`,
-  `cursor`. Response `{documents:[…], next_cursor, has_more, truncated,
+- GET: params `filter`/`sort`/`projection` = URL-encoded JSON (extended JSON ok), `limit`,
+  `cursor`. `projection` = top-level include/exclude object (values 1/0/true/false;
+  mixed styles rejected except `_id`; `_id:0` ok; `{}` no-op; dotted/`$` keys →
+  400 INVALID_PROJECTION). Sort fields + `_id` are force-added to the Mongo
+  projection and stripped from the output (union+strip, dbq.rs
+  `projection_document`/`projection_strip_fields`/`bson_to_json_projected`) so
+  keyset pagination and the array-sort guard keep working — cursors are
+  projection-independent. Response `{documents:[…], next_cursor, has_more, truncated,
   limit_applied, count}`. Server caps `limit` at the app's adaptive limit.
 - POST: `{filter?, data}` — no filter = insert (201 `{inserted_count,
   inserted_id}`); with filter = update (200 `{matched_count, modified_count}`).
@@ -339,7 +353,7 @@ browser (API contracts verified via curl only — see §9 gaps).
 | route | auth | behavior |
 |---|---|---|
 | `POST /auth` | public (throttled) | login → JWT + cookie (see 5.1) |
-| `GET /q/{db}/{coll}` | Bearer or cookie | query: `filter`/`sort` URL-encoded JSON, `limit`, `cursor`; keyset pagination |
+| `GET /q/{db}/{coll}` | Bearer or cookie | query: `filter`/`sort`/`projection` URL-encoded JSON, `limit`, `cursor`; keyset pagination |
 | `POST /q/{db}/{coll}` | Bearer | insert (no filter) / update (filter) — data auto-`$set` |
 | `PUT /q/{db}/{coll}` | Bearer | update, 404 if 0 matched |
 | `PATCH /q/{db}/{coll}` | Bearer | upsert (200 updated / 201 inserted) |
@@ -465,6 +479,8 @@ it becomes load-bearing. Pages (2026-08-11):
 - `xavierdb-dashboard-ui` — dashboard UI architecture (edit points, badge model, known gaps)
 - `xavierdb-dataset-route` — /ls rename history, cursor bug fix
 - `xavierdb-docs` — docs restructure, AGENTS.md, credentials layout
+- `xavierdb-examples` — examples/ crate: scope decisions, verified perms/dashboard-API facts, per-example contracts (DONE 2026-08-13)
+- `xavierdb-projection` — GET /q projection: design spec + implementation record (DONE 2026-08-13), verified cursor/keyset mechanics, union+strip scheme, latent dotted-sort-key bug
 - `xavierdb-review` — the 3-round review campaign: per-finding verdicts, fixes, test augmentation
 
 ## 10. Known limits & open items
@@ -487,6 +503,8 @@ Known limits (by design, not bugs):
   auth failures return the identical `UNAUTHORIZED` body.
 
 Known gaps / things to check:
+- **GET projection: IMPLEMENTED (2026-08-13)** — `projection` param (JSON object, INVALID_PROJECTION 400), union+strip scheme keeps the keyset cursor correct (Mongo always sees sort fields + `_id`; client sees only requested fields). Dotted/nested projection keys and `$`-operators rejected (top-level only, v1). See notebook `xavierdb-projection`.
+- **Dotted sort keys (`{"a.b":1}`) paginate incorrectly** — pre-existing latent bug (found 2026-08-11 during projection design; code-verified, not live-verified): `bson::Document::get` is an exact top-level lookup (no dotted resolution), so `make_next_cursor` reads a Null boundary and the array-sort guard goes blind → wrong pagination on collections sorted by nested fields. Fix = `get_path` helper + equivalence-test guard; treat as separate follow-up.
 - Dashboard UI never browser-tested (API contracts verified via curl only) —
   first browser pass may reveal weight-popover overflow, legend wrap, slider feel.
 - Docker setup never run (no Docker on this machine) — build, healthcheck,

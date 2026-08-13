@@ -1,4 +1,5 @@
-/target
+target/
+examples/target/
 .env
 authorized_keys.yml
 config
