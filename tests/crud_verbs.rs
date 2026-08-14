@@ -476,6 +476,320 @@ fn patch_upsert_both_paths() {
 }
 
 #[test]
+fn upsert_many_mixed_update_insert() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_bu_mixed";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+    seed(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        "existing",
+        json!({"v": 0, "keep": "yes"}),
+    );
+
+    // one matched update, one upserted by _id, two plain inserts (no _id)
+    let (status, body) = patch_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [
+            {"_id": "existing", "v": 1, "extra": true},
+            {"_id": "new", "v": 2},
+            {"v": 3},
+            {"v": 4},
+        ]}),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["matched_count"], 1);
+    assert_eq!(body["modified_count"], 1);
+    assert_eq!(body["inserted_count"], 2);
+    assert_eq!(body["upserted_count"], 1);
+    // ids in input order; the two no-_id docs got driver ObjectIds
+    assert_eq!(body["upserted_ids"], json!(["new"]));
+    let ins = body["inserted_ids"].as_array().unwrap();
+    assert_eq!(ins.len(), 2);
+    for id in ins {
+        let s = id.as_str().expect("ObjectId hex string");
+        assert_eq!(s.len(), 24);
+        assert!(s.chars().all(|c| c.is_ascii_hexdigit()), "bad hex: {s}");
+    }
+    assert_ne!(ins[0], ins[1]);
+
+    // $set-merge: untouched fields survive; _id stripped from the $set payload
+    let docs = get_docs(&agent, &jwt, DB_CRUD, coll);
+    assert_eq!(docs.len(), 4);
+    let by_id = |id: &str| {
+        docs.iter()
+            .find(|d| d["_id"].as_str() == Some(id))
+            .unwrap_or_else(|| panic!("missing {id}"))
+    };
+    assert_eq!(by_id("existing")["v"], 1);
+    assert_eq!(by_id("existing")["extra"], true);
+    assert_eq!(by_id("existing")["keep"], "yes");
+    assert_eq!(by_id("new")["v"], 2);
+}
+
+#[test]
+fn upsert_many_all_insert_no_ids() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_bu_insert";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+
+    let (status, body) = patch_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [{"v": 1}, {"v": 2}, {"v": 3}]}),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["matched_count"], 0);
+    assert_eq!(body["modified_count"], 0);
+    assert_eq!(body["inserted_count"], 3);
+    assert_eq!(body["upserted_count"], 0);
+    assert_eq!(body["upserted_ids"], json!([]));
+    let ins = body["inserted_ids"].as_array().unwrap();
+    assert_eq!(ins.len(), 3);
+    let mut hexes: Vec<&str> = ins
+        .iter()
+        .map(|id| id.as_str().expect("ObjectId hex string"))
+        .collect();
+    assert!(
+        hexes
+            .iter()
+            .all(|s| s.len() == 24 && s.chars().all(|c| c.is_ascii_hexdigit()))
+    );
+    hexes.sort();
+    hexes.dedup();
+    assert_eq!(hexes.len(), 3, "all generated ids distinct");
+
+    let docs = get_docs(&agent, &jwt, DB_CRUD, coll);
+    assert_eq!(docs.len(), 3);
+}
+
+#[test]
+fn upsert_many_all_update() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_bu_update";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+    seed(&agent, &jwt, DB_CRUD, coll, "a", json!({"v": 0}));
+    seed(&agent, &jwt, DB_CRUD, coll, "b", json!({"v": 0}));
+
+    let (status, body) = patch_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [{"_id": "a", "v": 10}, {"_id": "b", "v": 20}]}),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["matched_count"], 2);
+    assert_eq!(body["modified_count"], 2);
+    assert_eq!(body["inserted_count"], 0);
+    assert_eq!(body["upserted_count"], 0);
+    assert_eq!(body["inserted_ids"], json!([]));
+    assert_eq!(body["upserted_ids"], json!([]));
+
+    // idempotent re-run: matched but not modified
+    let (status, body) = patch_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [{"_id": "a", "v": 10}, {"_id": "b", "v": 20}]}),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["matched_count"], 2);
+    assert_eq!(body["modified_count"], 0);
+
+    let docs = get_docs(&agent, &jwt, DB_CRUD, coll);
+    assert_eq!(docs.len(), 2);
+}
+
+#[test]
+fn upsert_many_bad_batches() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_bu_bad";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+
+    // empty array -> 400
+    let (status, body) = patch_q(&agent, &jwt, DB_CRUD, coll, &json!({"data": []}));
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+
+    // non-object element -> 400, nothing written
+    let (status, body) = patch_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [{"_id": "ok1", "v": 1}, 42]}),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+    assert!(get_docs(&agent, &jwt, DB_CRUD, coll).is_empty());
+
+    // duplicate _id INSIDE the batch -> clean 400 before Mongo, no partial write
+    let (status, body) = patch_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [
+            {"_id": "dup", "v": 1},
+            {"_id": "other", "v": 2},
+            {"_id": "dup", "v": 3},
+        ]}),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+    assert!(get_docs(&agent, &jwt, DB_CRUD, coll).is_empty());
+
+    // batch over the cap -> 400 (cap read from /health — env-configurable)
+    let cap = max_insert_batch(&agent);
+    let mut batch = Vec::new();
+    for i in 0..cap + 1 {
+        batch.push(json!({"_id": format!("big{i}"), "i": i}));
+    }
+    let (status, body) = patch_q(&agent, &jwt, DB_CRUD, coll, &json!({"data": batch}));
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+    assert!(get_docs(&agent, &jwt, DB_CRUD, coll).is_empty());
+
+    // array data WITH a filter -> 400 (upsert-many takes no filter)
+    let (status, body) = patch_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"filter": {"_id": "x"}, "data": [{"_id": "y", "v": 1}]}),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+    assert!(get_docs(&agent, &jwt, DB_CRUD, coll).is_empty());
+
+    // object data without filter stays rejected (single-doc PATCH needs a filter)
+    let (status, body) = patch_q(&agent, &jwt, DB_CRUD, coll, &json!({"data": {"v": 1}}));
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+}
+
+#[test]
+fn upsert_many_conflict_ordered_semantics() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_bu_conflict";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+
+    // a unique index on "email", created directly through the driver
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let client = mongodb::Client::with_uri_str(&mongo_uri()).await.unwrap();
+        let coll = client
+            .database(DB_CRUD)
+            .collection::<bson::Document>("crud_bu_conflict");
+        coll.create_index(
+            mongodb::IndexModel::builder()
+                .keys(bson::doc! {"email": 1})
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+        )
+        .await
+        .unwrap();
+    });
+
+    // unique email per run so index creation never sees stale duplicates
+    let email = format!(
+        "bu-{}-{}@example.com",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    );
+    let fresh = format!("bu-fresh-{email}");
+    seed(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        "base",
+        json!({"email": email, "v": 0}),
+    );
+
+    // ordered bulk: Mongo aborts at the first dup key; docs BEFORE it remain
+    let (status, body) = patch_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [
+            {"email": fresh, "v": 1},
+            {"email": email, "v": 99},
+            {"email": "never@example.com", "v": 3},
+        ]}),
+    );
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(err_code(&body), "CONFLICT");
+    assert_eq!(err_status(&body), 409);
+
+    let docs = get_docs(&agent, &jwt, DB_CRUD, coll);
+    assert_eq!(
+        docs.len(),
+        2,
+        "docs before the dup remain, failing + after not"
+    );
+    let emails: Vec<&str> = docs.iter().map(|d| d["email"].as_str().unwrap()).collect();
+    assert!(emails.contains(&email.as_str()));
+    assert!(emails.contains(&fresh.as_str()));
+    assert!(!emails.contains(&"never@example.com"));
+}
+
+#[test]
+fn upsert_many_permission_gate() {
+    let agent = agent();
+    let coll = "crud_bu_gate";
+    // main clears; u2 (POST+PATCH only on xdb_tb_shared) drives the batch
+    clear_coll(&agent, &jwt("main"), DB_SHARED, coll);
+
+    let (status, body) = patch_q(
+        &agent,
+        &jwt("u2"),
+        DB_SHARED,
+        coll,
+        &json!({"data": [{"_id": "u2-ok", "v": 1}]}),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["upserted_count"], 1);
+    assert_eq!(body["upserted_ids"], json!(["u2-ok"]));
+
+    // reader is GET-only on xdb_tb_shared -> 403
+    let (status, body) = patch_q(
+        &agent,
+        &jwt("reader"),
+        DB_SHARED,
+        coll,
+        &json!({"data": [{"_id": "denied", "v": 1}]}),
+    );
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(err_code(&body), "FORBIDDEN");
+}
+
+#[test]
 fn delete_counts_and_404() {
     let agent = agent();
     let jwt = jwt("main");
