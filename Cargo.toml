@@ -29,3 +29,12 @@ tokio-rustls = "0.26.4"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 uuid = { version = "1.24.0", features = ["v4"] }
+
+# Integration battery in tests/ — black-box HTTP tests that need a running
+# server + MongoDB (see AGENTS.md §4.1). Dev-deps do not affect release builds.
+[dev-dependencies]
+bson = { version = "2", features = ["chrono-0_4"] }
+mongodb = "3.3.0"
+serde_json = "1"
+tokio = { version = "1.53.1", features = ["rt"] }
+ureq = { version = "2", features = ["json"] }

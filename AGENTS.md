@@ -22,12 +22,21 @@ it so it stays accurate and self-contained.
    (§4.1). The compose/Docker setup targets other machines and is untested.
 4. **On Windows the debug binary locks itself while running** — `cargo build`
    fails ("Accès refusé") until the server is killed. Restart ritual (this
-   machine, Windows):
-   `taskkill //F //IM XavierDB.exe` → rebuild → start with
-   `cd /c/Users/tbouy/code/XavierDB && ./target/debug/XavierDB.exe >> /tmp/xdb.log 2>&1 & disown`
-   — the start MUST be its own bash command (not chained). A bash command that
-   times out can kill the disowned server: keep commands short and use
-   `--max-time` on curls. On Linux/macOS the binary is `./target/debug/XavierDB`
+   machine, Windows — each step a SEPARATE bash command):
+   1. `taskkill //F //IM XavierDB.exe` → verify down (`curl /health` fails)
+   2. `cargo build --tests` (rebuilds the server binary AND keeps the
+      test-mode fingerprints fresh)
+   3. start with
+      `cd /c/Users/tbouy/code/XavierDB && ./target/debug/XavierDB.exe >> /tmp/xdb.log 2>&1 & disown`
+      — the start MUST be its own bash command (not chained). A bash command
+      that times out can kill the disowned server: keep commands short and
+      use `--max-time` on curls.
+   **Trap:** never run plain `cargo build` between `cargo build --tests` and
+   `cargo test` — the normal-mode build re-invalidates the test-mode bin
+   fingerprint (mongodb is built as two separate units, one per graph) and
+   `cargo test` then tries to relink `target/debug/XavierDB.exe` → lock.
+   The only clean sequence is: kill → `cargo build --tests` → start → `cargo test`.
+   On Linux/macOS the binary is `./target/debug/XavierDB`
    (no `.exe`), rebuilds work while the server runs, and stopping it is
    `pkill XavierDB` (or `kill <pid>`).
 5. Consult the notebooks (§9) for TODOs and small remarks before starting
@@ -82,6 +91,12 @@ XavierDB/
 ├── examples/                      # standalone crate: 8 runnable client examples (see examples/README.md)
 │   ├── Cargo.toml / Cargo.lock    #   own deps (ureq + serde_json only), own lockfile
 │   └── src/bin/                   #   per example: setup_<name>.rs (dashboard API) + <name>.rs (client API)
+├── tests/                         # integration battery — BLACK-BOX HTTP tests, need a running server+Mongo (§4.1)
+│   ├── common/mod.rs              #   shared helpers: fixture world docs, cached JWTs/admin cookie, HTTP wrappers, suite lock
+│   ├── bootstrap.sh               #   one-time fixture bootstrap (idempotent; dashboard creds from env or credentials.md)
+│   └── auth_flow.rs, crud_verbs.rs, dashboard_api.rs, edge_data.rs, meta_endpoints.rs,
+│       multi_app.rs, pagination.rs, perms_matrix.rs, projection.rs, query_filters.rs,
+│       smoke.rs, watcher_reload.rs   # 97 tests, ~26 s full run
 ├── .env.example                 # documented env template (copy to .env)
 ├── authorized_keys.yml.example  # documented permissions template
 ├── src/
@@ -148,7 +163,9 @@ Startup behavior (`main.rs`):
 
 Watcher details (`main.rs::start_watchers`): notify crate, 500ms debounce;
 self-writes are skipped via `last_config_written`/`last_perms_written` byte
-comparison; invalid files → keep previous state + error log.
+comparison; a successful watcher reload re-stamps the loaded bytes, so a
+restore of a file to the server's previous write is detected as a change
+again; invalid files → keep previous state + error log.
 
 ---
 
@@ -161,8 +178,10 @@ npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (on
 # typecheck the dashboard TS (esbuild does NOT typecheck):
 #   npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
 cargo build                      # debug; on Windows fails while the server is running (file lock)
-cargo test                       # 40 unit tests; XDB_TEST_MONGO_URI=mongodb://127.0.0.1:27017
-                                 #   additionally runs the Mongo-backed pagination-equivalence test
+cargo test                       # 44 unit + 97 integration tests (tests/); needs a running server
+                                 #   + MongoDB — see "Integration battery" below
+                                 # XDB_TEST_MONGO_URI=mongodb://127.0.0.1:27017 additionally runs the
+                                 #   Mongo-backed pagination-equivalence test (scratch db, dropped after)
 ./target/debug/XavierDB          # from repo root; cwd-relative state files; no CLI args
                                  # (Windows: ./target/debug/XavierDB.exe)
 
@@ -171,6 +190,38 @@ cargo build --manifest-path examples/Cargo.toml
 cargo run --manifest-path examples/Cargo.toml --bin setup_projection -- --admin-pass <dashboard-password>
 cargo run --manifest-path examples/Cargo.toml --bin projection
 ```
+
+#### Integration battery (tests/ — black-box HTTP, needs server + MongoDB up)
+
+97 tests across 12 files (auth_flow, perms_matrix, meta_endpoints, crud_verbs,
+edge_data, query_filters, projection, pagination, dashboard_api, multi_app,
+watcher_reload, smoke). Every /auth costs ~5 s Argon2id and shares a 30/min
+per-IP throttle, so JWTs + the admin cookie are cached in `<temp>/xdb_tb_cache`
+and shared across all tests (~0 logins on a warm run; a stale cache
+auto-refreshes via probe → re-login).
+
+```bash
+bash tests/bootstrap.sh --dash-user <user> --dash-pass '<password>'   # ONE TIME per machine:
+                                 #   creates the xdb_tb_* fixture apps via the dashboard perms API,
+                                 #   logs in 9 identities, caches JWTs, seeds 8 dbs. Idempotent
+                                 #   (skips slow steps when done). Credentials ONLY from the args
+                                 #   (or XDB_DASH_USER/XDB_DASH_PASS env) — never from a file.
+cargo test                       # everything; binaries run sequentially (~26 s test time)
+cargo test --test multi_app      # a single area (auth_flow, perms_matrix, pagination, ...)
+```
+
+Fixture world (fully documented in tests/common/mod.rs): 6 apps — xdb_tb_main
+(all verbs/dbs), xdb_tb_restricted (GET * minus xdb_tb_secret), xdb_tb_ro (GET
+xdb_tb_shared only), xdb_tb_m1 (db globs + name-level deny), xdb_tb_m2
+(POST+PATCH only), xdb_tb_m3 (single collection) — plus 8 seeded dbs.
+State-mutating tests (perms/config/block) serialize on a suite lock and
+restore state; each test uses its own collections; seeding is idempotent.
+
+Windows lock gotcha: `cargo test` relinks the bin test harness (XavierDB.exe)
+whenever src/ or Cargo.toml changed — kill the server first, `cargo build
+--tests`, restart the server, then `cargo test` (incremental test runs don't
+relink). Never run plain `cargo build` between `cargo build --tests` and
+`cargo test` (it re-dirties the test-mode fingerprint — see §0.4).
 
 - Requires a running MongoDB (default `mongodb://localhost:27017`). This
   machine: portable mongod 8.0.12 (see §8).
@@ -434,6 +485,10 @@ validation) map to 400; duplicate keys → 409.
   (data dir `%TEMP%\mongodata`; NOT a service; kill `taskkill //F //IM mongod.exe`).
   Test DBs: db1{items}, db2{coll_b}.
 - GIT: user handles commits — never commit (§0.2).
+- `.env` has NO `JWT_SECRET` on this machine → the server generates a random
+  secret per start, so ALL cached JWTs die on server restart. The battery
+  self-heals (probe → re-login), but remember this when debugging 401s after
+  a restart. Dashboard sessions are in-memory anyway (restart = re-login).
 - Test scripts/cookies kept in `%LOCALAPPDATA%\Temp` (xdb-js-example.js,
   xdb-python-example.py, xdb-cookies.txt, xdb-perms-before/grant.json,
   /tmp/xdb.log server log).
@@ -482,6 +537,7 @@ it becomes load-bearing. Pages (2026-08-11):
 - `xavierdb-examples` — examples/ crate: scope decisions, verified perms/dashboard-API facts, per-example contracts (DONE 2026-08-13)
 - `xavierdb-projection` — GET /q projection: design spec + implementation record (DONE 2026-08-13), verified cursor/keyset mechanics, union+strip scheme, latent dotted-sort-key bug
 - `xavierdb-review` — the 3-round review campaign: per-finding verdicts, fixes, test augmentation
+- `xavierdb-test-battery` — tests/ integration battery: fixture world, bootstrap, verified behaviors + spec corrections (DONE 2026-08-14)
 
 ## 10. Known limits & open items
 
@@ -504,6 +560,13 @@ Known limits (by design, not bugs):
 
 Known gaps / things to check:
 - **GET projection: IMPLEMENTED (2026-08-13)** — `projection` param (JSON object, INVALID_PROJECTION 400), union+strip scheme keeps the keyset cursor correct (Mongo always sees sort fields + `_id`; client sees only requested fields). Dotted/nested projection keys and `$`-operators rejected (top-level only, v1). See notebook `xavierdb-projection`.
+- **Verified live by the battery (2026-08-14)** — behaviors worth knowing:
+  - Include-only projections STRIP `_id` unless explicitly requested: `{name:1}` → docs have only `name`; `{name:1,_id:1}` keeps it. `{_id:0}` alone returns everything except `_id` (FIXED 2026-08-14 — it previously collapsed to `{}`).
+  - Dots are valid in COLLECTION names (`bad..name` OK) — 400 only for dots in the db segment. MongoDB 8.0.12 also ACCEPTS `$`-prefixed field names in stored documents (they round-trip literally).
+  - Extraction failures (malformed or missing-field JSON bodies, malformed query strings) → **400 `{error, code:"BAD_REQUEST", status:400}`** (FIXED 2026-08-14 — previously axum's plain-text rejections, incl. 422 for missing fields, leaked through).
+  - Missing/null sort values sort BEFORE NaN ascending (Mongo 8 order: null < NaN < numbers). `$gte` on a Decimal128 matches int/double values too (cross-type).
+  - Watcher: a reload re-stamps the loaded bytes, so a byte-identical restore of authorized_keys.yml IS picked up automatically (FIXED 2026-08-14 — it previously required an explicit `/perms/reload`).
+  - `truncated:true` + `limit_applied` = enforced cap when the client requested more than the adaptive limit; `next_cursor` only appears when the set was actually cut.
 - **Dotted sort keys (`{"a.b":1}`) paginate incorrectly** — pre-existing latent bug (found 2026-08-11 during projection design; code-verified, not live-verified): `bson::Document::get` is an exact top-level lookup (no dotted resolution), so `make_next_cursor` reads a Null boundary and the array-sort guard goes blind → wrong pagination on collections sorted by nested fields. Fix = `get_path` helper + equivalence-test guard; treat as separate follow-up.
 - Dashboard UI never browser-tested (API contracts verified via curl only) —
   first browser pass may reveal weight-popover overflow, legend wrap, slider feel.
@@ -514,10 +577,12 @@ Known gaps / things to check:
 - `config` hot-reload + atomic-rename editors (vim etc.) may detach the notify
   watcher — restart re-attaches.
 
-Verification checkpoints after code changes: `cargo test` (40 tests; with
-XDB_TEST_MONGO_URI set it also runs the keyset pagination-equivalence test
-against real MongoDB — phase 1: NaN/±Inf datasets must match a full scan
-exactly; phase 2: array datasets must either match exactly or stop with the
-explicit 400, never diverge silently), full
+Verification checkpoints after code changes: `cargo test` (141 tests — 44
+unit + 97 integration; with XDB_TEST_MONGO_URI set it also runs the keyset
+pagination-equivalence test against real MongoDB — phase 1: NaN/±Inf datasets
+must match a full scan exactly; phase 2: array datasets must either match
+exactly or stop with the explicit 400, never diverge silently), full
 auth→/q→/ls→health curl cycle, perms watcher restore cycle (see notebook
-`xavierdb-build` for the exact snapshot/restore ritual).
+`xavierdb-build` for the exact snapshot/restore ritual). When src/ changed on
+Windows, the battery needs the kill → `cargo build --tests` → restart ritual
+first (§4.1).
