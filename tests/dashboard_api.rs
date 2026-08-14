@@ -210,9 +210,9 @@ fn config_post_and_undo() {
 
     let (_, snap) = dash_get(&agent, &cookie, "/dashboard/api/config");
     let orig = snap["config"]["dashboard"]["poll_seconds"]
-        .as_u64()
+        .as_f64()
         .expect("poll_seconds");
-    let new = if orig == 7 { 3 } else { 7 };
+    let new = if orig == 7.0 { 3.0 } else { 7.0 };
     let mut cfg = snap["config"].clone();
     cfg["dashboard"]["poll_seconds"] = json!(new);
     let (status, body) = dash_post(
@@ -230,7 +230,7 @@ fn config_post_and_undo() {
 
     let (_, after) = dash_get(&agent, &cookie, "/dashboard/api/config");
     assert_eq!(
-        after["config"]["dashboard"]["poll_seconds"].as_u64(),
+        after["config"]["dashboard"]["poll_seconds"].as_f64(),
         Some(orig),
         "undo restored the original poll_seconds"
     );
@@ -406,7 +406,7 @@ fn logs_databases_export() {
     assert!(body["rate_limit"].is_object());
     let text = serde_json::to_string(&body).unwrap();
     assert!(
-        text.contains("config"),
+        text.contains("permission_file"),
         "export JSON contains config content"
     );
 }

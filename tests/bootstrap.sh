@@ -114,12 +114,33 @@ for entry in "${logins[@]}"; do
 done
 
 # ---- seed the fixture dbs so /ls and restricted-app tests see them -----------
+# Stale-JWT guard: on this machine the server generates a random JWT_SECRET per
+# start, so after a restart every cached JWT is invalid (401). Re-login the main
+# identity once and retry — makes re-runs safe regardless of restarts.
 MAIN_JWT="$(cat "$CACHE_DIR/main.jwt")"
+seed_db() {
+  curl -s --max-time 15 -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer $MAIN_JWT" -X POST "$BASE/q/$db/seed" \
+    -H 'Content-Type: application/json' -d '{"data":{"_id":"seed-1","v":1}}'
+}
+REFRESHED=""
 for db in xdb_tb_shared xdb_tb_secret xdb_tb_extra xdb_tb_crud xdb_tb_query \
           xdb_tb_proj xdb_tb_page xdb_tb_edge; do
-  code="$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' \
-    -H "Authorization: Bearer $MAIN_JWT" -X POST "$BASE/q/$db/seed" \
-    -H 'Content-Type: application/json' -d '{"data":{"_id":"seed-1","v":1}}')"
+  code="$(seed_db)"
+  if [ "$code" = "401" ] && [ -z "$REFRESHED" ]; then
+    REFRESHED=1
+    echo "cached main JWT stale (401) — re-logging in tester@xdb_tb_main"
+    curl -s --max-time 30 -D "$CACHE_DIR/main.headers" -X POST "$BASE/auth" \
+      -H 'Content-Type: application/json' \
+      -d '{"identifier":"tester@xdb_tb_main","token":"tb-main-secret-token"}' \
+      -o "$CACHE_DIR/main.json" || fail "auth curl tester@xdb_tb_main"
+    grep -q '"token":"' "$CACHE_DIR/main.json" \
+      || fail "auth rejected tester@xdb_tb_main: $(cat "$CACHE_DIR/main.json")"
+    grep -o '"token":"[^"]*"' "$CACHE_DIR/main.json" | head -1 \
+      | sed 's/"token":"//;s/"//' > "$CACHE_DIR/main.jwt"
+    MAIN_JWT="$(cat "$CACHE_DIR/main.jwt")"
+    code="$(seed_db)"
+  fi
   [ "$code" = "201" ] || [ "$code" = "409" ] || fail "seed $db -> $code"
 done
 echo "dbs seeded"
