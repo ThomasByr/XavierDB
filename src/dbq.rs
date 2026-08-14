@@ -942,6 +942,80 @@ pub async fn update_many(
         .map_err(Into::into)
 }
 
+/// Summary of a bulk upsert (PATCH /q with array `data`): the counts plus
+/// the per-document ids in INPUT order.
+pub struct BulkCounts {
+    pub matched_count: i64,
+    pub modified_count: i64,
+    pub inserted_count: i64,
+    pub upserted_count: i64,
+    pub inserted_ids: Vec<Bson>,
+    pub upserted_ids: Vec<Bson>,
+}
+
+/// Upsert-many in one round trip via the MongoDB 8.0+ bulkWrite command:
+/// each doc with `_id` becomes an upserting UpdateOne on `{_id}` with a
+/// $set merge (the filter carries the `_id`, so it is stripped from the
+/// payload — Mongo re-adds it to the inserted doc on upsert); each doc
+/// without `_id` becomes a plain InsertOne.
+///
+/// Requires MongoDB 8.0+ — the driver's bulk_write has no legacy path.
+pub async fn bulk_upsert(
+    state: &AppState,
+    db: &str,
+    coll: &str,
+    docs: Vec<Document>,
+) -> Result<BulkCounts, ApiError> {
+    use mongodb::options::{InsertOneModel, UpdateOneModel, WriteModel};
+
+    let ns = mongodb::Namespace::new(db.to_string(), coll.to_string());
+    let models: Vec<WriteModel> = docs
+        .into_iter()
+        .map(|mut doc| {
+            if let Some(id) = doc.remove("_id") {
+                WriteModel::UpdateOne(
+                    UpdateOneModel::builder()
+                        .namespace(ns.clone())
+                        .filter(doc! { "_id": id })
+                        .update(doc! { "$set": doc })
+                        .upsert(true)
+                        .build(),
+                )
+            } else {
+                WriteModel::InsertOne(
+                    InsertOneModel::builder()
+                        .namespace(ns.clone())
+                        .document(doc)
+                        .build(),
+                )
+            }
+        })
+        .collect();
+    let r = state.mongo.bulk_write(models).verbose_results().await?;
+    // insert/update results are keyed by input index (a HashMap in driver
+    // 3.x) — sort by index so the response order matches the request order
+    let mut inserted: Vec<(usize, Bson)> = r
+        .insert_results
+        .into_iter()
+        .map(|(i, res)| (i, res.inserted_id))
+        .collect();
+    inserted.sort_by_key(|(i, _)| *i);
+    let mut upserted: Vec<(usize, Bson)> = r
+        .update_results
+        .into_iter()
+        .filter_map(|(i, u)| u.upserted_id.map(|id| (i, id)))
+        .collect();
+    upserted.sort_by_key(|(i, _)| *i);
+    Ok(BulkCounts {
+        matched_count: r.summary.matched_count,
+        modified_count: r.summary.modified_count,
+        inserted_count: r.summary.inserted_count,
+        upserted_count: r.summary.upserted_count,
+        inserted_ids: inserted.into_iter().map(|(_, id)| id).collect(),
+        upserted_ids: upserted.into_iter().map(|(_, id)| id).collect(),
+    })
+}
+
 pub async fn delete_many(
     state: &AppState,
     db: &str,

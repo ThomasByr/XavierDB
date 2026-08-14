@@ -241,6 +241,18 @@ impl From<mongodb::error::Error> for ApiError {
                     ApiErrorKind::Internal
                 }
             }
+            // bulk_write (upsert-many on PATCH) surfaces write failures the
+            // same way: ErrorKind::BulkWrite with per-index codes
+            ErrorKind::BulkWrite(bwe) => {
+                let codes: Vec<i32> = bwe.write_errors.values().map(|w| w.code).collect();
+                if codes.iter().any(|&c| c == 11000) {
+                    ApiErrorKind::Conflict
+                } else if codes.iter().any(|&c| is_client_command(c)) {
+                    ApiErrorKind::BadRequest
+                } else {
+                    ApiErrorKind::Internal
+                }
+            }
             _ => ApiErrorKind::Internal,
         };
         let msg = match kind {

@@ -150,9 +150,7 @@ Batch insert (`data` as array) rules:
   MongoDB ordered semantics: the insert aborts at the first duplicate and
   documents *before* it remain inserted.
 
-> **No upsert-many**: batch writes are insert-only — there is no bulk upsert /
-> bulk-update endpoint. Upserts remain single-document (PATCH `{filter, data}`,
-> see below).
+> **Upsert-many lives on PATCH** (see below): POST batches are insert-only.
 
 ### PUT /q/{db}/{coll}
 
@@ -161,8 +159,30 @@ Body: `{ "filter": object, "data": object }` — update all matching (`$set`).
 
 ### PATCH /q/{db}/{coll}
 
-Body: `{ "filter": object, "data": object }` — upsert. `200` when updated,
-`201` when a document was inserted (`upserted_id` present).
+Two modes — the single-document upsert and the batch upsert-many:
+
+- Body `{ "filter": object, "data": object }` — **single-document upsert**
+  (`$set` merge). `200` when updated, `201` when a document was inserted
+  (`upserted_id` present).
+- Body `{ "data": [ object, … ] }` (array, **no** filter) — **upsert-many**,
+  always `200`:
+
+  ```json
+  { "matched_count": n, "modified_count": n, "inserted_count": n,
+    "upserted_count": n, "inserted_ids": ["…", …], "upserted_ids": ["…", …] }
+  ```
+
+  Per element: has `_id` → upsert by `{_id}` with a `$set` merge (the `_id`
+  is carried by the filter, not the payload); no `_id` → plain insert with a
+  generated ObjectId. Ids in both arrays are in **input order**. Batch
+  validation matches POST batch insert (non-empty, objects only,
+  `MAX_INSERT_BATCH` cap, no `_id` duplicated within the batch → `400` with
+  nothing written). Conflicts against existing data (`_id` or a unique
+  index) return `409` with MongoDB ordered semantics: the bulk aborts at
+  the first failing element and elements before it remain applied. A
+  `{filter, data: array}` body is rejected with `400` ("batch upsert takes
+  no filter"); `{data: object}` without filter stays `400`. Requires
+  MongoDB 8.0+ (uses the new `bulkWrite` command).
 
 ### DELETE /q/{db}/{coll}
 

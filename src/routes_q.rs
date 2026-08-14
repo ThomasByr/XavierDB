@@ -7,7 +7,8 @@
 //!   POST   /q/{db}/{coll}       insert (no filter: object → insert_one, array → insert_many)
 //!                                or update-many ($set)
 //!   PUT    /q/{db}/{coll}       update-many ($set), 404 when nothing matched
-//!   PATCH  /q/{db}/{coll}       upsert, 201 when a document was inserted
+//!   PATCH  /q/{db}/{coll}       upsert, 201 when a document was inserted;
+//!                                array `data` (no filter) = upsert-many, 200
 //!   DELETE /q/{db}/{coll}       delete-many, 404 when nothing deleted
 
 use std::collections::HashSet;
@@ -29,10 +30,10 @@ use crate::dbq::{self, Cursor};
 use crate::error::{ApiError, ApiErrorKind, JsonBody, QueryBody};
 use crate::state::{AppState, ClientStats};
 
-/// Default max documents per insert batch (POST /q with array `data`) when
-/// the MAX_INSERT_BATCH env var is unset or invalid. Bounds the write work a
-/// single request can trigger; also caps the adaptive-limit weight that
-/// counts into per-client rate accounting.
+/// Default max documents per batch (POST /q with array `data`, PATCH /q
+/// upsert-many) when the MAX_INSERT_BATCH env var is unset or invalid.
+/// Bounds the write work a single request can trigger; also caps the
+/// adaptive-limit weight that counts into per-client rate accounting.
 pub const MAX_INSERT_BATCH: usize = 1000;
 
 // ---------------------------------------------------------------------------
@@ -557,6 +558,36 @@ pub async fn patch_upsert(
     let started = Instant::now();
     check_path(&db, &coll)?;
     let claims = authorize(&state, &headers, "PATCH", &db, &coll).await?;
+
+    // upsert-many: array `data`, no filter — per-doc upsert by _id (docs
+    // without _id are plain inserts) in one bulkWrite round trip
+    if let Some(Value::Array(items)) = &body.data {
+        if body.filter.is_some() {
+            return Err(ApiError::bad_request("batch upsert takes no filter"));
+        }
+        let docs = batch_to_docs(
+            items
+                .iter()
+                .map(|v| dbq::json_to_bson(v).map_err(ApiError::bad_request))
+                .collect::<Result<Vec<bson::Bson>, _>>()?,
+            state.max_insert_batch,
+        )?;
+        let n = docs.len();
+        let r = dbq::bulk_upsert(&state, &db, &coll, docs).await?;
+        record_request(&state, &claims, started, n as u32);
+        return Ok((
+            axum::http::StatusCode::OK,
+            Json(json!({
+                "matched_count": r.matched_count,
+                "modified_count": r.modified_count,
+                "inserted_count": r.inserted_count,
+                "upserted_count": r.upserted_count,
+                "inserted_ids": r.inserted_ids.iter().map(dbq::bson_to_json).collect::<Vec<_>>(),
+                "upserted_ids": r.upserted_ids.iter().map(dbq::bson_to_json).collect::<Vec<_>>(),
+            })),
+        ));
+    }
+
     let (filter, data) = body_filter_data(&body)?;
     if filter.is_empty() {
         return Err(ApiError::bad_request("PATCH requires a filter"));
