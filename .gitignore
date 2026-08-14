@@ -6,3 +6,4 @@ config
 config.bak*
 node_modules/
 src/assets/*.js
+xavierdb.log*

@@ -8,3 +8,4 @@ node_modules
 config
 config.bak*
 authorized_keys.yml
+xavierdb.log*
