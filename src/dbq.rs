@@ -410,8 +410,17 @@ pub fn parse_projection(v: &Value) -> Result<Option<Projection>, ApiError> {
         }
         fields.insert(k.clone());
     }
+    // Only `_id` keys present: `{_id:1}` keeps the include style (Mongo
+    // returns only _id); `{_id:0}` alone means "everything except _id", so it
+    // must be an EXCLUDE projection — as include-style it would collapse the
+    // output to empty documents.
+    let style = match style {
+        Some(s) => s,
+        None if exclude_id => ProjectionStyle::Exclude,
+        None => ProjectionStyle::Include,
+    };
     Ok(Some(Projection {
-        style: style.unwrap_or(ProjectionStyle::Include),
+        style,
         fields,
         exclude_id,
         include_id,
@@ -1285,6 +1294,7 @@ mod tests {
         assert_eq!(exc.fields, BTreeSet::from(["a".into(), "c".into()]));
         let id0 = parse(r#"{"_id":0}"#).unwrap().unwrap();
         assert!(id0.exclude_id && id0.fields.is_empty());
+        assert_eq!(id0.style, ProjectionStyle::Exclude); // everything except _id
         let id1 = parse(r#"{"a":1,"_id":1}"#).unwrap().unwrap();
         assert!(id1.include_id && !id1.exclude_id);
         // empty object is a no-op
@@ -1394,8 +1404,11 @@ mod tests {
                 r#"{"b":1,"_id":1}"#,
                 BTreeSet::from(["b".into(), "_id".into()]),
             ),
-            // include {_id:0} alone: Mongo semantics -> no fields at all
-            (r#"{"_id":0}"#, BTreeSet::new()),
+            // include {_id:0} alone: exclude-style -> everything except _id
+            (
+                r#"{"_id":0}"#,
+                BTreeSet::from(["a".into(), "b".into(), "c".into(), "extra".into()]),
+            ),
             // exclude {c, _id:0}: visible = {a, b, extra}
             (
                 r#"{"c":0,"_id":0}"#,

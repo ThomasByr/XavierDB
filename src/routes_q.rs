@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use bson::Document;
 use bson::doc;
@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use crate::auth::{Claims, valid_path_segment, verify_jwt};
 use crate::config::BlockStatus;
 use crate::dbq::{self, Cursor};
-use crate::error::{ApiError, ApiErrorKind};
+use crate::error::{ApiError, ApiErrorKind, JsonBody, QueryBody};
 use crate::state::{AppState, ClientStats};
 
 // ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ fn cursor_last_name(cur: &Cursor) -> Result<Option<String>, ApiError> {
 pub async fn list_visible(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Query(params): Query<ListParams>,
+    QueryBody(params): QueryBody<ListParams>,
 ) -> Result<Json<Value>, ApiError> {
     let started = Instant::now();
     let claims = authenticate(&state, &headers)?;
@@ -293,7 +293,7 @@ pub async fn find_docs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
-    Query(params): Query<FindParams>,
+    QueryBody(params): QueryBody<FindParams>,
 ) -> Result<Json<Value>, ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;
@@ -422,7 +422,7 @@ pub async fn insert_or_update(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
-    Json(body): Json<WriteBody>,
+    JsonBody(body): JsonBody<WriteBody>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;
@@ -462,7 +462,7 @@ pub async fn put_update(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
-    Json(body): Json<WriteBody>,
+    JsonBody(body): JsonBody<WriteBody>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;
@@ -491,7 +491,7 @@ pub async fn patch_upsert(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
-    Json(body): Json<WriteBody>,
+    JsonBody(body): JsonBody<WriteBody>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;
@@ -524,7 +524,7 @@ pub async fn delete_docs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
-    Json(body): Json<Value>,
+    JsonBody(body): JsonBody<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;

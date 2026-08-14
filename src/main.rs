@@ -230,6 +230,13 @@ fn start_watchers(state: Arc<AppState>, tls_state: Option<Arc<tls::TlsState>>) {
                     Ok(()) => {
                         *st.perms.write().unwrap() = perms;
                         st.perms_version.fetch_add(1, Ordering::Relaxed);
+                        // re-stamp with the bytes just loaded, so a later
+                        // restore to the server's previous write is seen as a
+                        // change again (otherwise disk and memory diverge
+                        // until the next server-side write)
+                        if let Some(b) = bytes {
+                            *st.last_perms_written.lock().unwrap() = Some(b);
+                        }
                         info!("authorized_keys.yml reloaded from disk");
                     }
                     Err(e) => error!("authorized_keys.yml invalid, keeping previous: {e}"),
@@ -258,6 +265,9 @@ fn start_watchers(state: Arc<AppState>, tls_state: Option<Arc<tls::TlsState>>) {
         }
         *st2.config.write().unwrap() = cfg;
         st2.cfg_version.fetch_add(1, Ordering::Relaxed);
+        if let Some(b) = bytes {
+            *st2.last_config_written.lock().unwrap() = Some(b);
+        }
         info!("config reloaded from disk");
     });
 

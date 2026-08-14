@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::auth::{check_admin_session, create_admin_session, hash_credential};
 use crate::config::ConfigFile;
-use crate::error::ApiError;
+use crate::error::{ApiError, JsonBody};
 use crate::perms::{AppEntry, PermissionsFile, Rule, effective_rules};
 use crate::state::{AppState, now_ms};
 
@@ -53,7 +53,7 @@ pub struct LoginBody {
 pub async fn login(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
-    Json(body): Json<LoginBody>,
+    JsonBody(body): JsonBody<LoginBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     // peer socket IP only — see routes_misc::auth_login (X-Forwarded-For is
     // client-controlled and must not be trusted for throttling)
@@ -318,7 +318,7 @@ fn config_change(
 pub async fn block(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<BlockBody>,
+    JsonBody(body): JsonBody<BlockBody>,
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&state, &headers)?;
     let id = body.id.trim().to_string();
@@ -337,7 +337,7 @@ pub async fn block(
 pub async fn unblock(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<BlockBody>,
+    JsonBody(body): JsonBody<BlockBody>,
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&state, &headers)?;
     config_change(&state, &format!("unblock {}", body.id), "blocked", |cfg| {
@@ -356,7 +356,7 @@ pub struct WeightBody {
 pub async fn app_weight(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<WeightBody>,
+    JsonBody(body): JsonBody<WeightBody>,
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&state, &headers)?;
     let id = body.id.trim().to_string();
@@ -459,7 +459,7 @@ pub struct PermsNameIn {
 pub async fn perms_save(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<PermsSaveBody>,
+    JsonBody(body): JsonBody<PermsSaveBody>,
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&state, &headers)?;
 
@@ -556,7 +556,7 @@ pub struct ConfigSaveBody {
 pub async fn config_save(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<ConfigSaveBody>,
+    JsonBody(body): JsonBody<ConfigSaveBody>,
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&state, &headers)?;
     let mut new = body.config;
@@ -612,7 +612,7 @@ pub async fn config_reload(
 pub async fn config_revert(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<serde_json::Value>,
+    JsonBody(body): JsonBody<serde_json::Value>,
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&state, &headers)?;
     let idx = body["index"].as_u64().unwrap_or(u64::MAX) as usize;
@@ -678,7 +678,7 @@ pub struct ConfigImportBody {
 pub async fn config_import(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<ConfigImportBody>,
+    JsonBody(body): JsonBody<ConfigImportBody>,
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&state, &headers)?;
     let mut cfg = state.config.read().unwrap().clone();

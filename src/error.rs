@@ -1,8 +1,11 @@
 //! API error types with meaningful HTTP status codes and sanitized messages.
 
 use axum::Json;
+use axum::extract::{FromRequest, FromRequestParts, Query};
 use axum::http::StatusCode;
+use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
+use serde::de::DeserializeOwned;
 use serde_json::json;
 
 #[derive(Debug, Clone)]
@@ -282,5 +285,64 @@ impl From<serde_json::Error> for ApiError {
             ApiErrorKind::BadRequest,
             format!("invalid JSON: {}", sanitize(&e.to_string())),
         )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Contract-preserving extractors
+//
+// axum's built-in `Json`/`Query` rejections bypass the handler's error type
+// entirely (the Handler impl calls `Rejection::into_response()` directly,
+// never `From<Rejection> for E`), so they leak plain-text bodies and odd
+// status codes (e.g. 422 for missing fields). These wrappers map every
+// extraction failure onto the standard {error, code, status} contract.
+// ---------------------------------------------------------------------------
+
+/// JSON request body with the standard error contract on extraction failure.
+/// Use like `Json`: `JsonBody(body): JsonBody<SomeBody>`.
+pub struct JsonBody<T>(pub T);
+
+impl<S, T> FromRequest<S> for JsonBody<T>
+where
+    S: Send + Sync,
+    T: DeserializeOwned,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(
+        req: axum::http::Request<axum::body::Body>,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let axum::Json(v) = Json::<T>::from_request(req, state).await.map_err(|e| {
+            ApiError::bad_request(format!(
+                "invalid request body: {}",
+                sanitize(&e.to_string())
+            ))
+        })?;
+        Ok(JsonBody(v))
+    }
+}
+
+/// Query-string extractor with the standard error contract on extraction
+/// failure. Use like `Query`: `QueryBody(params): QueryBody<SomeParams>`.
+pub struct QueryBody<T>(pub T);
+
+impl<S, T> FromRequestParts<S> for QueryBody<T>
+where
+    S: Send + Sync,
+    T: DeserializeOwned,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Query(v) = Query::<T>::from_request_parts(parts, state)
+            .await
+            .map_err(|e| {
+                ApiError::bad_request(format!(
+                    "invalid query string: {}",
+                    sanitize(&e.to_string())
+                ))
+            })?;
+        Ok(QueryBody(v))
     }
 }

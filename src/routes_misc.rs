@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::auth::{auth_throttled, parse_identifier, sign_jwt, verify_credential};
-use crate::error::ApiError;
+use crate::error::{ApiError, JsonBody};
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
@@ -25,7 +25,7 @@ pub struct AuthBody {
 pub async fn auth_login(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
-    Json(body): Json<AuthBody>,
+    JsonBody(body): JsonBody<AuthBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Throttle keys on the peer socket IP only: X-Forwarded-For is
     // client-controlled, so trusting it would let a caller rotate the header
