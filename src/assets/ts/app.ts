@@ -1407,10 +1407,9 @@ function renderConfig() {
   const v = $("#view");
   v.innerHTML = "";
   v.append(el("div", { class: "card" }, [
-    el("h3", {}, ["Configuration (binary file `config` — settings, adaptive rate limiting, blocked list)"]),
+    el("h3", {}, ["Configuration (binary file `config` — settings, adaptive rate limiting, blocked list)", el("span", { id: "cfg-dirty", class: "badge warn hidden", style: "margin-left:auto" }, ["unsaved changes"])]),
     el("div", { class: "row", style: "margin-bottom:12px" }, [
       el("button", { id: "cfg-save", class: "btn" }, ["Save"]),
-      el("span", { id: "cfg-dirty", class: "badge warn hidden", style: "margin-left:auto" }, ["unsaved changes"]),
       el("button", { id: "cfg-undo", class: "btn btn-outline" }, ["Undo"]),
       el("button", { id: "cfg-redo", class: "btn btn-outline" }, ["Redo"]),
       el("button", { id: "cfg-reload", class: "btn btn-outline" }, ["Reload from disk"]),
