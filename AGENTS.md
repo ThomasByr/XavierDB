@@ -96,7 +96,7 @@ XavierDB/
 │   ├── bootstrap.sh               #   one-time fixture bootstrap (idempotent; dashboard creds from env or credentials.md)
 │   └── auth_flow.rs, crud_verbs.rs, dashboard_api.rs, edge_data.rs, meta_endpoints.rs,
 │       multi_app.rs, pagination.rs, perms_matrix.rs, projection.rs, query_filters.rs,
-│       smoke.rs, watcher_reload.rs   # 108 tests, ~30 s full run
+│       smoke.rs, watcher_reload.rs   # 110 tests, ~30 s full run
 ├── .env.example                 # documented env template (copy to .env)
 ├── authorized_keys.yml.example  # documented permissions template
 ├── src/
@@ -178,7 +178,7 @@ npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (on
 # typecheck the dashboard TS (esbuild does NOT typecheck):
 #   npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
 cargo build                      # debug; on Windows fails while the server is running (file lock)
-cargo test                       # 44 unit + 108 integration tests (tests/); needs a running server
+cargo test                       # 44 unit + 110 integration tests (tests/); needs a running server
                                  #   + MongoDB — see "Integration battery" below
                                  # XDB_TEST_MONGO_URI=mongodb://127.0.0.1:27017 additionally runs the
                                  #   Mongo-backed pagination-equivalence test (scratch db, dropped after)
@@ -193,7 +193,7 @@ cargo run --manifest-path examples/Cargo.toml --bin projection
 
 #### Integration battery (tests/ — black-box HTTP, needs server + MongoDB up)
 
-108 tests across 12 files (auth_flow, perms_matrix, meta_endpoints, crud_verbs,
+110 tests across 12 files (auth_flow, perms_matrix, meta_endpoints, crud_verbs,
 edge_data, query_filters, projection, pagination, dashboard_api, multi_app,
 watcher_reload, smoke). Every /auth costs ~5 s Argon2id and shares a 30/min
 per-IP throttle, so JWTs + the admin cookie are cached in `<temp>/xdb_tb_cache`
@@ -600,8 +600,8 @@ Known gaps / things to check:
 - `config` hot-reload + atomic-rename editors (vim etc.) may detach the notify
   watcher — restart re-attaches.
 
-Verification checkpoints after code changes: `cargo test` (152 tests — 44
-unit + 108 integration; with XDB_TEST_MONGO_URI set it also runs the keyset
+Verification checkpoints after code changes: `cargo test` (154 tests — 44
+unit + 110 integration; with XDB_TEST_MONGO_URI set it also runs the keyset
 pagination-equivalence test against real MongoDB — phase 1: NaN/±Inf datasets
 must match a full scan exactly; phase 2: array datasets must either match
 exactly or stop with the explicit 400, never diverge silently), full

@@ -178,7 +178,7 @@ needed at runtime.
 
 ## Tests
 
-Two tiers, both launched with `cargo test` (44 unit + 108 integration = 152):
+Two tiers, both launched with `cargo test` (44 unit + 110 integration = 154):
 
 - **Inline unit tests** live in `src/` next to the code (`#[cfg(test)]`
   modules): config-file round-trips and backup rotation, permission parsing
@@ -196,7 +196,7 @@ Commands (a running server + MongoDB are required for the integration
 battery; see below):
 
 ```bash
-cargo test                              # everything: 44 unit + 108 integration
+cargo test                              # everything: 44 unit + 110 integration
 cargo test --bin XavierDB               # inline unit tests only
 cargo test --test auth_flow             # one integration suite (12 suites total)
 XDB_TEST_MONGO_URI=mongodb://127.0.0.1:27017 cargo test   # + the Mongo-backed

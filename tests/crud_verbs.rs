@@ -314,6 +314,57 @@ fn insert_many_dup_against_existing_conflict() {
 }
 
 #[test]
+fn insert_many_failfast_validation_error() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_im_failfast";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+
+    // a validator collection (v must be a string), created through the
+    // driver: drop first — drop is idempotent for missing collections
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let client = mongodb::Client::with_uri_str(&mongo_uri()).await.unwrap();
+        let db = client.database(DB_CRUD);
+        db.collection::<bson::Document>(coll).drop().await.unwrap();
+        db.create_collection(coll)
+            .validator(bson::doc! {"v": {"$type": "string"}})
+            .await
+            .unwrap();
+    });
+
+    // the middle element violates the validator (code 121 -> 400 BAD_REQUEST
+    // through the InsertMany error arm); ordered fail-fast: docs before it
+    // remain inserted, the one after is never attempted
+    let (status, body) = post_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [
+            {"_id": "ok1", "v": "s"},
+            {"_id": "bad", "v": 123},
+            {"_id": "ok3", "v": "x"},
+        ]}),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+    assert_eq!(err_status(&body), 400);
+
+    let docs = get_docs(&agent, &jwt, DB_CRUD, coll);
+    let mut ids: Vec<&str> = docs.iter().map(|d| d["_id"].as_str().unwrap()).collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec!["ok1"],
+        "docs before the failing one remain, after is never attempted"
+    );
+}
+
+#[test]
 fn post_with_filter_updates() {
     let agent = agent();
     let jwt = jwt("main");
@@ -787,6 +838,57 @@ fn upsert_many_permission_gate() {
     );
     assert_eq!(status, 403, "{body}");
     assert_eq!(err_code(&body), "FORBIDDEN");
+}
+
+#[test]
+fn upsert_many_failfast_validation_error() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_bu_failfast";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+
+    // a validator collection (v must be a string), created through the
+    // driver: drop first — drop is idempotent for missing collections
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let client = mongodb::Client::with_uri_str(&mongo_uri()).await.unwrap();
+        let db = client.database(DB_CRUD);
+        db.collection::<bson::Document>(coll).drop().await.unwrap();
+        db.create_collection(coll)
+            .validator(bson::doc! {"v": {"$type": "string"}})
+            .await
+            .unwrap();
+    });
+
+    // the middle element violates the validator (code 121 -> 400 BAD_REQUEST
+    // through the BulkWrite error arm); ordered fail-fast: ok1 (an upserting
+    // UpdateOne) stays applied, ok3 is never attempted
+    let (status, body) = patch_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [
+            {"_id": "ok1", "v": "s"},
+            {"_id": "bad", "v": 123},
+            {"_id": "ok3", "v": "x"},
+        ]}),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+    assert_eq!(err_status(&body), 400);
+
+    let docs = get_docs(&agent, &jwt, DB_CRUD, coll);
+    let mut ids: Vec<&str> = docs.iter().map(|d| d["_id"].as_str().unwrap()).collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec!["ok1"],
+        "elements before the failing one remain, after is never attempted"
+    );
 }
 
 #[test]
