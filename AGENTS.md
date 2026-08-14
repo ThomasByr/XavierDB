@@ -179,9 +179,9 @@ npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (on
 #   npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
 cargo build                      # debug; on Windows fails while the server is running (file lock)
 cargo test                       # 44 unit + 110 integration tests (tests/); needs a running server
-                                 #   + MongoDB — see "Integration battery" below
-                                 # XDB_TEST_MONGO_URI=mongodb://127.0.0.1:27017 additionally runs the
-                                 #   Mongo-backed pagination-equivalence test (scratch db, dropped after)
+                                 #   + MongoDB — see "Integration battery" below; tests talk to
+                                 #   real Mongo unconditionally (XDB_TB_MONGO_URI, default
+                                 #   mongodb://localhost:27017)
 ./target/debug/XavierDB          # from repo root; cwd-relative state files; no CLI args
                                  # (Windows: ./target/debug/XavierDB.exe)
 
@@ -388,7 +388,7 @@ browser (API contracts verified via curl only — see §9 gaps).
   permission_file="authorized_keys.yml"}, rate_limit{min=1, max=200,
   multiplier=1.0, target=50, pressure_sens=1.5, latency_sens=1.0, growth=1.15,
   tick=5, ema=0.2, weights{}}, health{ttl=5}, dashboard{poll=2, smoothing=5,
-  theme="system"}, auth{per_ip=30, session_ttl_h=24}, blocked[], history[],
+  log_level="info", theme="system"}, auth{per_ip=30, session_ttl_h=24}, blocked[], history[],
   redo[].
 
 ### 5.7 Health
@@ -412,7 +412,9 @@ browser (API contracts verified via curl only — see §9 gaps).
   session cookie; errors same `{error, code, status}` shape): login/logout/
   session, metrics (big poll payload), block/unblock, app_weight, perms
   GET/POST(full-merge)/reload, databases, config GET/POST/undo/redo/reload/
-  reset/revert/export/import, logs (in-memory ring ~1500 lines). See §6.
+  reset/revert/export/import, logs (structured in-memory ring, cap 3000,
+  every console line incl. eprintln/panics; ?limit&before paging + app/name
+  facets). See §6.
 - UI architecture details (badge permission editor, detached scopes, weight
   popover, config slider form): kept in notebook `xavierdb-dashboard-ui`; the
   essential contracts are in §6.
@@ -475,7 +477,10 @@ validation) map to 400; duplicate keys → 409.
   notebook `xavierdb-dashboard-api` for exact ranges); undo/redo/reload
   (fallback to config.bak on corruption, returns `warning`)/revert
   `{index}`/reset/export (JSON attachment)/import.
-- `GET /dashboard/api/logs` → `{lines:[String]}` (ring, ~1500).
+- `GET /dashboard/api/logs` → `{lines:[{seq, raw, level, app, name}], total,
+  apps, names}` (ring cap 3000; `?limit=N` (0 = all), `?before=<seq>` for
+  load-older paging; `apps`/`names` = distinct identities seen in the ring,
+  for the client-side filter dropdowns).
 - `GET /dashboard/api/databases` → `{databases:[{name, collections}],
   unavailable}` — admin-only, unfiltered (client-side equivalent: `/ls`).
 
@@ -601,10 +606,10 @@ Known gaps / things to check:
   watcher — restart re-attaches.
 
 Verification checkpoints after code changes: `cargo test` (154 tests — 44
-unit + 110 integration; with XDB_TEST_MONGO_URI set it also runs the keyset
-pagination-equivalence test against real MongoDB — phase 1: NaN/±Inf datasets
-must match a full scan exactly; phase 2: array datasets must either match
-exactly or stop with the explicit 400, never diverge silently), full
+unit + 110 integration; NaN/±Inf sort and array-sort pagination are covered
+live by tests/pagination.rs `nan_sort_paginates` + `array_sort_guard` through
+the server's own Mongo connection; crud_verbs.rs talks to Mongo directly
+with XDB_TB_MONGO_URI, default mongodb://localhost:27017), full
 auth→/q→/ls→health curl cycle, perms watcher restore cycle (see notebook
 `xavierdb-build` for the exact snapshot/restore ritual). When src/ changed on
 Windows, the battery needs the kill → `cargo build --tests` → restart ritual

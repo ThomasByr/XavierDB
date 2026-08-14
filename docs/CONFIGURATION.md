@@ -47,8 +47,9 @@ checksummed (CRC32) and written atomically.
 | `rate_limit` | `ema_alpha` | 0.2 | smoothing of the request-rate measurement |
 | `rate_limit` | `weights` | — | per-app weight multiplier (0.1–10, snapped to 0.1) — set per app in the dashboard Clients view |
 | `health` | `cache_ttl_seconds` | 5 | /health refresh interval |
-| `dashboard` | `poll_seconds` | 2 | browser polling interval for metrics |
+| `dashboard` | `poll_seconds` | 2 | browser polling interval for metrics (fractional seconds ok; dashboard slider 0.1–10) |
 | `dashboard` | `graph_smoothing` | 5 | client-side graph smoothing window |
+| `dashboard` | `log_level` | `info` | console + dashboard-ring verbosity: `info` \| `debug` (debug adds one line per `/q`/`/ls` request: method, path, identity) — hot-reloadable |
 | `dashboard` | `theme` | `system` | `system` \| `light` \| `dark` |
 | `auth` | `max_per_minute_per_ip` | 30 | brute-force throttle on `/auth` and dashboard login |
 | `auth` | `session_ttl_hours` | 24 | dashboard session lifetime |
