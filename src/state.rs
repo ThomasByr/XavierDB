@@ -243,40 +243,221 @@ pub struct LogEntry {
     pub name: Option<String>,
 }
 
-pub const LOG_CAP: usize = 3000;
+/// Rotating log files on disk — the ONLY log store (no in-memory ring: the
+/// Logs tab reads back from these files, so memory stays flat regardless of
+/// traffic). Settings come from env (LOG_FILES / LOG_SIZE_MB, see
+/// .env.example) and are NOT live-changeable.
+///
+/// Files (cwd-relative): `xavierdb.log` = current/newest, `xavierdb.log.1` =
+/// previous, ... `xavierdb.log.{files-1}` = oldest. When the current file
+/// exceeds size_bytes it is renamed to .1 (shifting the chain, dropping the
+/// oldest) and a fresh file is started.
+const LOG_BASE: &str = "xavierdb.log";
+/// Lines scanned for the filter facets on each /logs read (bounded: the
+/// dropdowns never need the whole store).
+const LOG_FACET_LINES: usize = 2000;
 
-struct LogRing {
-    entries: VecDeque<LogEntry>,
+pub struct LogFileSink {
+    dir: std::path::PathBuf,
+    files: usize,
+    size_bytes: u64,
+    /// global line counter — seeded at init by scanning the existing files,
+    /// so line numbers stay stable across restarts (and across rotations).
     next_seq: u64,
-    cap: usize,
+    cur_bytes: u64,
+    file: Option<std::fs::File>,
 }
 
-impl LogRing {
-    fn new(cap: usize) -> Self {
-        Self { entries: VecDeque::with_capacity(cap), next_seq: 0, cap }
-    }
-    fn push(
-        &mut self,
-        level: String,
-        logger: String,
-        app: Option<String>,
-        name: Option<String>,
-        raw: String,
-    ) {
-        if self.entries.len() >= self.cap {
-            self.entries.pop_front();
+impl LogFileSink {
+    fn new(dir: std::path::PathBuf, files: usize, size_bytes: u64) -> Self {
+        let mut s = Self {
+            dir,
+            files: files.clamp(1, 10),
+            size_bytes: size_bytes.max(1024),
+            next_seq: 0,
+            cur_bytes: 0,
+            file: None,
+        };
+        // seed the counter from existing files (restart continuity) and
+        // reopen the current file in append mode
+        for i in (1..s.files).rev() {
+            s.next_seq += count_lines(&s.dir.join(format!("{LOG_BASE}.{i}")));
         }
-        self.entries.push_back(LogEntry { seq: self.next_seq, raw, level, logger, app, name });
-        self.next_seq += 1;
+        let cur = s.dir.join(LOG_BASE);
+        s.next_seq += count_lines(&cur);
+        s.cur_bytes = std::fs::metadata(&cur).map(|m| m.len()).unwrap_or(0);
+        s.file = std::fs::OpenOptions::new().create(true).append(true).open(&cur).ok();
+        s
+    }
+
+    fn write(&mut self, line: &str) {
+        if self.file.is_none() {
+            return;
+        }
+        let add = line.len() as u64 + 1; // + newline
+        if self.cur_bytes + add > self.size_bytes {
+            self.rotate();
+        }
+        use std::io::Write;
+        if let Some(f) = &mut self.file {
+            if f.write_all(line.as_bytes()).and_then(|_| f.write_all(b"\n")).is_ok() {
+                self.cur_bytes += add;
+                self.next_seq += 1;
+            }
+        }
+    }
+
+    fn rotate(&mut self) {
+        self.file = None; // close before renaming (Windows locks open files)
+        let _ = std::fs::remove_file(self.dir.join(format!("{LOG_BASE}.{}", self.files - 1)));
+        for i in (1..self.files - 1).rev() {
+            let from = self.dir.join(format!("{LOG_BASE}.{i}"));
+            let to = self.dir.join(format!("{LOG_BASE}.{}", i + 1));
+            let _ = std::fs::rename(&from, &to);
+        }
+        let cur = self.dir.join(LOG_BASE);
+        let _ = std::fs::rename(&cur, self.dir.join(format!("{LOG_BASE}.1")));
+        self.cur_bytes = 0;
+        self.file = std::fs::OpenOptions::new().create(true).append(true).open(&cur).ok();
+    }
+
+    /// Entries in chronological order (oldest first). `limit` = max entries
+    /// (0 = all); `before` = only entries with seq < before. Facets come from
+    /// the last `max(limit, LOG_FACET_LINES)` lines (bounded scan).
+    fn read(&self, limit: usize, before: Option<u64>) -> (Vec<LogEntry>, u64, Vec<String>, Vec<(String, String)>, Vec<String>) {
+        let total = self.next_seq;
+        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        for i in (1..self.files).rev() {
+            let p = self.dir.join(format!("{LOG_BASE}.{i}"));
+            if p.exists() {
+                paths.push(p);
+            }
+        }
+        let cur = self.dir.join(LOG_BASE);
+        if cur.exists() {
+            paths.push(cur);
+        }
+        let counts: Vec<u64> = paths.iter().map(|p| count_lines(p)).collect();
+        let mut collected: Vec<LogEntry> = Vec::new();
+        let mut want = if limit == 0 { usize::MAX } else { limit.max(LOG_FACET_LINES) };
+        'walk: for (idx, p) in paths.iter().enumerate().rev() {
+            if want == 0 {
+                break;
+            }
+            let base_seq = counts[..idx].iter().sum::<u64>();
+            let lines = read_lines(p);
+            for (li, line) in lines.iter().enumerate().rev() {
+                let seq = base_seq + li as u64;
+                if before.is_some_and(|b| seq >= b) {
+                    continue;
+                }
+                let (level, logger, msg) = parse_level_msg(line);
+                let (name, app) = log_identify(&msg);
+                collected.push(LogEntry { seq, raw: line.clone(), level, logger, app, name });
+                want -= 1;
+                if want == 0 {
+                    break 'walk;
+                }
+            }
+        }
+        collected.reverse(); // oldest -> newest
+        // facets from the whole collected window; response = last `limit`
+        let mut apps: Vec<String> = collected
+            .iter()
+            .filter_map(|e| e.app.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let mut names: Vec<(String, String)> = collected
+            .iter()
+            .filter_map(|e| e.app.as_ref().zip(e.name.as_ref()).map(|(a, n)| (a.clone(), n.clone())))
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let mut loggers: Vec<String> = collected
+            .iter()
+            .map(|e| e.logger.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        apps.sort();
+        names.sort();
+        loggers.sort();
+        let cut = if limit == 0 { 0 } else { collected.len().saturating_sub(limit) };
+        let entries = collected.split_off(cut);
+        (entries, total, apps, names, loggers)
+    }
+
+    fn retention(&self) -> (u32, u32, String) {
+        (self.files as u32, (self.size_bytes / (1024 * 1024)) as u32, LOG_BASE.to_string())
     }
 }
 
-/// Global ring (not on AppState) so lines emitted before the state exists
+/// Global sink (not on AppState) so lines emitted before the state exists
 /// (env bootstrap, config/perms load, JWT notice, panic hook) are captured too.
-static LOG_RING: OnceLock<Mutex<LogRing>> = OnceLock::new();
+static LOG_FILES: OnceLock<Mutex<LogFileSink>> = OnceLock::new();
 
-fn ring() -> &'static Mutex<LogRing> {
-    LOG_RING.get_or_init(|| Mutex::new(LogRing::new(LOG_CAP)))
+/// Initialize the rotating log files. Called once at startup from env
+/// LOG_FILES / LOG_SIZE_MB (clamped to 1..=10 / 1..=20).
+pub fn init_log_files(files: usize, size_mb: usize) {
+    let dir = std::env::current_dir().unwrap_or_default();
+    let sink = LogFileSink::new(dir, files, (size_mb as u64) * 1024 * 1024);
+    let _ = LOG_FILES.set(Mutex::new(sink));
+}
+
+/// Append a fully formatted line to the rotating files (no parsing at write
+/// time — lines are parsed on read for the structured /logs payload).
+pub fn log_file_write(line: &str) {
+    if let Some(m) = LOG_FILES.get() {
+        let mut s = m.lock().unwrap_or_else(|p| p.into_inner());
+        s.write(line);
+    }
+}
+
+/// Read a window of log entries from the files (see LogFileSink::read).
+pub fn log_read(
+    limit: usize,
+    before: Option<u64>,
+) -> (Vec<LogEntry>, u64, Vec<String>, Vec<(String, String)>, Vec<String>) {
+    match LOG_FILES.get() {
+        Some(m) => match m.lock() {
+            Ok(s) => s.read(limit, before),
+            Err(p) => p.into_inner().read(limit, before),
+        },
+        None => (Vec::new(), 0, Vec::new(), Vec::new(), Vec::new()),
+    }
+}
+
+pub fn log_retention() -> (u32, u32, String) {
+    match LOG_FILES.get() {
+        Some(m) => m.lock().map(|s| s.retention()).unwrap_or((0, 0, String::new())),
+        None => (0, 0, String::new()),
+    }
+}
+
+fn count_lines(p: &std::path::Path) -> u64 {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(p) else { return 0 };
+    let mut buf = [0u8; 64 * 1024];
+    let mut n = 0u64;
+    loop {
+        match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(k) => n += buf[..k].iter().filter(|&&b| b == b'\n').count() as u64,
+            Err(_) => break,
+        }
+    }
+    n
+}
+
+fn read_lines(p: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(p)
+        .map(|s| {
+            s.lines()
+                .map(|l| l.trim_end_matches('\r').to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 /// RFC3339 UTC with microsecond precision, matching tracing's default timer
@@ -304,33 +485,27 @@ fn fmt_ts() -> String {
     format!("{yy:04}-{mm:02}-{dd:02}T{h:02}:{mi:02}:{s:02}.{micros:06}Z")
 }
 
-fn push_fmt(level: &str, app: Option<String>, name: Option<String>, msg: &str) {
+fn push_fmt(level: &str, msg: &str) {
     let raw = format!("{} {:>5} XavierDB: {msg}", fmt_ts(), level);
-    if let Ok(mut r) = ring().lock() {
-        r.push(level.to_string(), "XavierDB".to_string(), app, name, raw);
-    }
+    log_file_write(&raw);
 }
 
-/// Log a line to the ring AND stderr (console keeps the current behavior).
+/// Log a line to the rotating files AND stderr (console keeps its behavior).
 pub fn log_line(level: &str, msg: &str) {
-    push_fmt(level, None, None, msg);
+    push_fmt(level, msg);
     eprintln!("{msg}");
 }
 
-/// Log a line to the ring AND stdout (used for one-shot bootstrap prints).
+/// Log a line to the rotating files AND stdout (used for one-shot bootstrap prints).
 pub fn log_stdout(level: &str, msg: &str) {
-    push_fmt(level, None, None, msg);
+    push_fmt(level, msg);
     println!("{msg}");
 }
 
-/// Push a fully formatted tracing line (LogWriter). Parses the level, the
-/// logger (tracing target) and the auth identity (app/name) out of it.
+/// Append a fully formatted tracing line (LogWriter) to the files. Identity
+/// and level are parsed on read (see log_identify / parse_level_msg).
 pub fn log_push_raw(line: String) {
-    let (level, logger, msg) = parse_level_msg(&line);
-    let (name, app) = log_identify(&msg);
-    if let Ok(mut r) = ring().lock() {
-        r.push(level, logger, app, name, line);
-    }
+    log_file_write(&line);
 }
 
 /// "2026-08-14T13:59:50.912518Z  INFO XavierDB::routes_misc: msg" -> ("INFO", "XavierDB::routes_misc", "msg")
@@ -380,47 +555,15 @@ fn log_identify(msg: &str) -> (Option<String>, Option<String>) {
     }
 }
 
-/// Snapshot of the ring: entries in chronological order (oldest first).
+/// Snapshot of the log files: entries in chronological order (oldest first).
 /// `limit` = max entries (0 = all); `before` = only entries with seq < before.
-/// Also returns the total count and the distinct app/name/logger facets for
-/// the dashboard filter dropdowns.
+/// Also returns the total count and the distinct app / (app,name) / logger
+/// facets for the dashboard filter dropdowns.
 pub fn log_snapshot(
     limit: usize,
     before: Option<u64>,
-) -> (Vec<LogEntry>, u64, Vec<String>, Vec<String>, Vec<String>) {
-    let r = ring().lock().unwrap();
-    let total = r.entries.len() as u64;
-    let mut apps: Vec<String> = r
-        .entries
-        .iter()
-        .filter_map(|e| e.app.clone())
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
-    let mut names: Vec<String> = r
-        .entries
-        .iter()
-        .filter_map(|e| e.name.clone())
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
-    let mut loggers: Vec<String> = r
-        .entries
-        .iter()
-        .map(|e| e.logger.clone())
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
-    apps.sort();
-    names.sort();
-    loggers.sort();
-    let iter = r.entries.iter().filter(|e| before.is_none_or(|b| e.seq < b));
-    let v: Vec<LogEntry> = if limit == 0 {
-        iter.cloned().collect()
-    } else {
-        iter.rev().take(limit).collect::<Vec<_>>().into_iter().rev().cloned().collect()
-    };
-    (v, total, apps, names, loggers)
+) -> (Vec<LogEntry>, u64, Vec<String>, Vec<(String, String)>, Vec<String>) {
+    log_read(limit, before)
 }
 
 // ---------------------------------------------------------------------------
@@ -439,5 +582,53 @@ pub fn set_log_level_hook(hook: Box<dyn Fn(&str) + Send + Sync>) {
 pub fn apply_log_level(level: &str) {
     if let Some(h) = LOG_LEVEL_HOOK.get() {
         h(level);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_files_rotate_bounded_and_keep_order() {
+        let dir = std::env::temp_dir().join(format!("xdb-logtest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // 3 files × 120 bytes: ~6 lines of ~50 bytes per file before rotating
+        let mut s = LogFileSink::new(dir.clone(), 3, 120);
+        for i in 0..40 {
+            s.write(&format!("line {i:04} pppppppppppppppppppppppppppppppppppppppp"));
+        }
+        drop(s);
+
+        // reopen: seq continuity across "restart"
+        let s2 = LogFileSink::new(dir.clone(), 3, 120);
+        let (entries, total, _, _, _) = s2.read(0, None);
+        assert_eq!(total, 40, "total line count");
+        assert_eq!(entries.len(), 40, "all lines readable");
+        assert_eq!(entries[0].raw, "line 0000 pppppppppppppppppppppppppppppppppppppppp");
+        assert_eq!(entries[39].raw, "line 0039 pppppppppppppppppppppppppppppppppppppppp");
+        assert!(entries.windows(2).all(|w| w[0].seq + 1 == w[1].seq), "seqs contiguous");
+        assert_eq!(entries[0].seq, 0, "seqs restart at 0 on a fresh store");
+
+        // bounded: at most `files` files on disk
+        let n_files = (0..=3)
+            .filter(|i| {
+                let p = if *i == 0 {
+                    dir.join(LOG_BASE)
+                } else {
+                    dir.join(format!("{LOG_BASE}.{i}"))
+                };
+                p.exists()
+            })
+            .count();
+        assert!(n_files <= 3, "file count bounded: {n_files}");
+
+        // paging: before=<seq> returns only older lines
+        let (page, _, _, _, _) = s2.read(5, Some(10));
+        assert_eq!(page.len(), 5);
+        assert!(page.iter().all(|e| e.seq < 10));
+        assert_eq!(page[0].seq, 5, "last 5 before seq 10");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

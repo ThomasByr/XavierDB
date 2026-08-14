@@ -396,6 +396,19 @@ fn main() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     load_env();
+    // rotating log files on disk (Logs tab reads from them; settings are
+    // env-only per design — LOG_FILES / LOG_SIZE_MB, defaults 5 files × 10 MB)
+    let log_files = std::env::var("LOG_FILES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5)
+        .clamp(1, 10);
+    let log_size_mb = std::env::var("LOG_SIZE_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10)
+        .clamp(1, 20);
+    crate::state::init_log_files(log_files, log_size_mb);
     // must run before the tokio runtime exists (it uses unsafe set_var)
     bootstrap_admin_password();
 

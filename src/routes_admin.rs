@@ -735,6 +735,7 @@ pub async fn logs(
     require_admin(&state, &headers)?;
     let limit = q.limit.unwrap_or(0).min(10_000);
     let (entries, total, apps, names, loggers) = crate::state::log_snapshot(limit, q.before);
+    let (files, size_mb, path) = crate::state::log_retention();
     Ok(Json(json!({
         "lines": entries
             .iter()
@@ -749,8 +750,12 @@ pub async fn logs(
             .collect::<Vec<_>>(),
         "total": total,
         "apps": apps,
-        "names": names,
+        "names": names
+            .iter()
+            .map(|(a, n)| json!({ "app": a, "name": n }))
+            .collect::<Vec<_>>(),
         "loggers": loggers,
+        "retention": { "files": files, "size_mb": size_mb, "path": path },
     })))
 }
 

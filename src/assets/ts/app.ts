@@ -1627,11 +1627,21 @@ let logTotal = 0;
 let logOldestSeq = 0; // seq of the oldest loaded entry (0 = nothing loaded)
 let logNoMore = false;
 let logApps: string[] = [];
-let logNames: string[] = [];
+let logNames: { app: string; name: string }[] = [];
 let logLoggers: string[] = [];
 let logBusy = false;
-let logRegexTimer = 0;
-const logFilters = { level: "", logger: "", app: "", name: "", regex: "" };
+let logSuggTimer = 0;
+// OR within a category, AND across categories: e.g. (DEBUG or INFO) and (app A or app B).
+const logFilters = {
+  levels: [] as string[],
+  loggers: [] as string[],
+  apps: [] as string[],
+  names: [] as string[],
+  regex: "",
+};
+const LOG_CAT_KEYS: Record<string, string> = {
+  level: "levels", logger: "loggers", app: "apps", name: "names",
+};
 
 function svgIcon(path: string, size = 16): SVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -1653,10 +1663,10 @@ function logRow(e: any): HTMLElement {
 }
 
 function logMatches(e: any, re: RegExp | null): boolean {
-  if (logFilters.level && e.level !== logFilters.level) return false;
-  if (logFilters.logger && e.logger !== logFilters.logger) return false;
-  if (logFilters.app && e.app !== logFilters.app) return false;
-  if (logFilters.name && e.name !== logFilters.name) return false;
+  if (logFilters.levels.length && !logFilters.levels.includes(e.level)) return false;
+  if (logFilters.loggers.length && !logFilters.loggers.includes(e.logger)) return false;
+  if (logFilters.apps.length && !logFilters.apps.includes(e.app)) return false;
+  if (logFilters.names.length && !logFilters.names.includes(e.name)) return false;
   if (re && !re.test(e.raw)) return false;
   return true;
 }
@@ -1682,52 +1692,108 @@ function renderLogList(scrollBottom = false) {
 function renderLogBadges() {
   const cont = $("#logs-fbadges");
   cont.innerHTML = "";
-  const defs: [string, string, string][] = [
-    ["level", logFilters.level, logFilters.level],
-    ["logger", logFilters.logger, "logger: " + logFilters.logger],
-    ["app", logFilters.app, "app: " + logFilters.app],
-    ["name", logFilters.name, "name: " + logFilters.name],
-    ["regex", logFilters.regex, "regex: /" + logFilters.regex + "/"],
+  const groups: [string, string, string[]][] = [
+    ["Log level", "levels", logFilters.levels],
+    ["Logger", "loggers", logFilters.loggers],
+    ["App", "apps", logFilters.apps],
+    ["Name", "names", logFilters.names],
   ];
-  for (const [key, val, label] of defs) {
-    if (!val) continue;
-    const b = el("span", { class: "f-badge" }, [label]);
-    const x = el("button", { class: "f-x", title: "remove filter" }, ["✕"]);
-    x.onclick = () => {
-      (logFilters as any)[key] = "";
-      syncLogFilterUI();
-      renderLogBadges();
-      renderLogList();
-    };
-    b.append(x);
-    cont.append(b);
+  for (const [label, key, vals] of groups) {
+    if (!vals.length) continue;
+    const g = el("span", { class: "f-group" }, [label + ":"]);
+    for (const v of vals) {
+      const chip = el("span", { class: "f-chip" }, [v]);
+      const x = el("button", { class: "f-x", title: "remove " + v }, ["✕"]);
+      x.onclick = () => {
+        (logFilters as any)[key] = vals.filter((y) => y !== v);
+        renderLogBadges();
+        renderLogList();
+      };
+      chip.append(x);
+      g.append(chip);
+    }
+    cont.append(g);
+  }
+  if (logFilters.regex) {
+    const g = el("span", { class: "f-group" }, ["Regex:"]);
+    const chip = el("span", { class: "f-chip" }, ["/" + logFilters.regex + "/"]);
+    const x = el("button", { class: "f-x", title: "remove regex" }, ["✕"]);
+    x.onclick = () => { logFilters.regex = ""; renderLogBadges(); renderLogList(); };
+    chip.append(x);
+    g.append(chip);
+    cont.append(g);
   }
 }
 
-function syncLogFilterUI() {
-  ($("#fl-level") as HTMLSelectElement).value = logFilters.level;
-  ($("#fl-logger") as HTMLSelectElement).value = logFilters.logger;
-  ($("#fl-app") as HTMLSelectElement).value = logFilters.app;
-  ($("#fl-name") as HTMLSelectElement).value = logFilters.name;
-  ($("#fl-regex") as HTMLInputElement).value = logFilters.regex;
+function toggleLogVal(key: string, v: string) {
+  const arr = (logFilters as any)[key] as string[];
+  const i = arr.indexOf(v);
+  if (i >= 0) arr.splice(i, 1);
+  else arr.push(v);
+  renderLogBadges();
+  renderLogList();
+  renderLogSugg();
 }
 
-function populateLogFacets() {
-  for (const [sel, vals, cur] of [
-    ["#fl-logger", logLoggers, logFilters.logger],
-    ["#fl-app", logApps, logFilters.app],
-    ["#fl-name", logNames, logFilters.name],
-  ] as [string, string[], string][]) {
-    const s = $(sel) as HTMLSelectElement;
-    s.innerHTML = "";
-    s.append(el("option", { value: "" }, ["all"]));
-    for (const v of vals) s.append(el("option", { value: v }, [v]));
-    if (cur && !vals.includes(cur)) s.append(el("option", { value: cur }, [cur]));
-    s.value = cur;
+function suggChip(label: string, on: boolean, cb: () => void): HTMLElement {
+  const c = el("button", { class: "sugg" + (on ? " on" : "") }, [(on ? "✓ " : "") + label]);
+  c.onclick = cb;
+  return c;
+}
+
+function renderLogSugg() {
+  const cat = ($("#fl-cat") as HTMLSelectElement).value;
+  const q = ($("#fl-val") as HTMLInputElement).value.trim().toLowerCase();
+  const box = $("#fl-sugg");
+  box.innerHTML = "";
+  if (cat === "level") {
+    for (const lv of ["DEBUG", "INFO", "WARN", "ERROR"]) {
+      box.append(suggChip(lv, logFilters.levels.includes(lv), () => toggleLogVal("levels", lv)));
+    }
+    return;
+  }
+  if (cat === "regex") {
+    box.append(el("div", { class: "muted" }, ["type a regex, press Enter to apply"]));
+    return;
+  }
+  if (cat === "logger") {
+    for (const l of logLoggers) {
+      if (!q || l.toLowerCase().includes(q)) {
+        box.append(suggChip(l, logFilters.loggers.includes(l), () => toggleLogVal("loggers", l)));
+      }
+    }
+  } else if (cat === "app") {
+    for (const a of logApps) {
+      if (!q || a.toLowerCase().includes(q)) {
+        box.append(suggChip(a, logFilters.apps.includes(a), () => toggleLogVal("apps", a)));
+      }
+    }
+  } else {
+    // names: narrowed by the selected apps (when any) + the typeahead text;
+    // each suggestion shows its app so same-name ids stay distinguishable
+    const selApps = logFilters.apps;
+    let shown = 0;
+    for (const p of logNames) {
+      if (selApps.length && !selApps.includes(p.app)) continue;
+      if (q && !p.name.toLowerCase().includes(q)) continue;
+      const label = p.app ? p.name + "@" + p.app : p.name;
+      box.append(suggChip(label, logFilters.names.includes(p.name), () => toggleLogVal("names", p.name)));
+      shown++;
+    }
+    for (const n of logFilters.names) {
+      if (!logNames.some((p) => p.name === n)) {
+        box.append(suggChip(n, true, () => toggleLogVal("names", n)));
+        shown++;
+      }
+    }
+    if (!shown) box.append(el("div", { class: "muted" }, ["no names match"]));
+  }
+  if (cat !== "level" && cat !== "regex" && !box.childElementCount) {
+    box.append(el("div", { class: "muted" }, ["no values yet — log some traffic first"]));
   }
 }
 
-async function logsFetch(before?: number): Promise<any> {
+function logsFetch(before?: number): Promise<any> {
   const q = new URLSearchParams({ limit: String(LOG_PAGE) });
   if (before !== undefined) q.set("before", String(before));
   return api("/logs?" + q.toString());
@@ -1738,7 +1804,7 @@ async function renderLogs() {
   v.innerHTML = "";
   logLoaded = []; logTotal = 0; logOldestSeq = 0; logNoMore = false;
   logApps = []; logNames = []; logLoggers = [];
-  v.append(el("div", { class: "card" }, [
+  v.append(el("div", { class: "card logs-card" }, [
     el("div", { class: "logs-head" }, [
       el("h3", {}, ["Server logs"]),
       el("div", { class: "row", style: "gap:8px" }, [
@@ -1747,27 +1813,26 @@ async function renderLogs() {
       ]),
     ]),
     el("div", { class: "logs-filterbar" }, [
-      el("button", { id: "logs-fbtn", class: "mini-btn", title: "Filter logs" }, [svgIcon(ICON_FILTER, 15)]),
+      el("button", { id: "logs-fbtn", class: "btn btn-outline btn-small", title: "Add log filters" }, [svgIcon(ICON_FILTER, 14), " Add filter"]),
       el("span", { id: "logs-fbadges", class: "logs-fbadges" }),
+      el("span", { class: "muted", id: "logs-retention", style: "margin-left:auto" }),
       el("div", { class: "logs-pop", id: "logs-pop" }, [
         el("div", { class: "lp-row" }, [
-          el("label", {}, ["Level"]),
-          el("select", { id: "fl-level" }, [
-            el("option", { value: "" }, ["all"]),
-            el("option", { value: "DEBUG" }, ["DEBUG"]),
-            el("option", { value: "INFO" }, ["INFO"]),
-            el("option", { value: "WARN" }, ["WARN"]),
-            el("option", { value: "ERROR" }, ["ERROR"]),
+          el("label", {}, ["Add"]),
+          el("select", { id: "fl-cat" }, [
+            el("option", { value: "level" }, ["log level"]),
+            el("option", { value: "logger" }, ["logger"]),
+            el("option", { value: "app" }, ["app id"]),
+            el("option", { value: "name" }, ["name id"]),
+            el("option", { value: "regex" }, ["regex"]),
           ]),
         ]),
-        el("div", { class: "lp-row" }, [el("label", {}, ["Logger"]), el("select", { id: "fl-logger" })]),
-        el("div", { class: "lp-row" }, [el("label", {}, ["App"]), el("select", { id: "fl-app" })]),
-        el("div", { class: "lp-row" }, [el("label", {}, ["Name"]), el("select", { id: "fl-name" })]),
         el("div", { class: "lp-row" }, [
-          el("label", {}, ["Regex"]),
-          el("input", { id: "fl-regex", type: "text", placeholder: "e.g. mongo|throttled", spellcheck: "false" }),
+          el("input", { id: "fl-val", type: "text", placeholder: "type to filter values…", spellcheck: "false" }),
         ]),
-        el("div", { class: "row", style: "justify-content:flex-end;margin-top:6px" }, [
+        el("div", { class: "fl-sugg", id: "fl-sugg" }),
+        el("div", { class: "row", style: "justify-content:space-between;margin-top:8px" }, [
+          el("span", { class: "muted", id: "fl-hint" }),
           el("button", { id: "fl-clear", class: "btn btn-outline btn-small" }, ["Clear all"]),
         ]),
       ]),
@@ -1783,7 +1848,12 @@ async function renderLogs() {
       logOldestSeq = d.lines.length ? d.lines[0].seq : 0;
       logNoMore = false;
       logApps = d.apps; logNames = d.names; logLoggers = d.loggers;
-      populateLogFacets();
+      const r = d.retention;
+      if (r && r.files) {
+        $("#logs-retention").textContent =
+          `${r.files} files × ${r.size_mb} MB (${r.path}) — set via LOG_FILES / LOG_SIZE_MB in .env`;
+      }
+      renderLogSugg();
       renderLogList(true);
     } catch (e: any) { snack(e.message); }
   };
@@ -1797,7 +1867,7 @@ async function renderLogs() {
       logTotal = d.total;
       if (d.lines.length === 0) { logNoMore = true; return; }
       logApps = d.apps; logNames = d.names; logLoggers = d.loggers;
-      populateLogFacets();
+      renderLogSugg();
       const seen = new Set(logLoaded.map((e: any) => e.seq));
       const fresh = d.lines.filter((e: any) => !seen.has(e.seq));
       logLoaded = fresh.concat(logLoaded);
@@ -1825,28 +1895,68 @@ async function renderLogs() {
       a.click();
     } catch (e: any) { snack(e.message); }
   };
-  $("#logs-fbtn").onclick = () => $("#logs-pop").classList.toggle("open");
-  $("#fl-clear").onclick = () => {
-    logFilters.level = ""; logFilters.logger = ""; logFilters.app = ""; logFilters.name = ""; logFilters.regex = "";
-    syncLogFilterUI(); renderLogBadges(); renderLogList();
+  // close when pressing outside the filter bar (incl. the popover).
+  // mousedown + a select/option guard: opening the native <select> dropdown
+  // must never close the popover (its popup events can escape contains()).
+  document.addEventListener("mousedown", (ev) => {
+    const t = ev.target as Node;
+    if (t instanceof Element && t.closest("select, option")) return;
+    const bar = $(".logs-filterbar");
+    if (!bar || !bar.contains(t)) $("#logs-pop").classList.remove("open");
+  });
+  const pop = $("#logs-pop");
+  const valIn = $("#fl-val") as HTMLInputElement;
+  const setHint = () => {
+    const cat = ($("#fl-cat") as HTMLSelectElement).value;
+    const n = (logFilters as any)[LOG_CAT_KEYS[cat] || "regex"];
+    const cnt = Array.isArray(n) ? n.length : (n ? 1 : 0);
+    $("#fl-hint").textContent = cnt ? cnt + " active" : "";
   };
-  const bindSelect = (sel: string, key: string) => {
-    $(sel).addEventListener("change", (ev) => {
-      (logFilters as any)[key] = (ev.target as HTMLSelectElement).value;
+  $("#logs-fbtn").addEventListener("mousedown", (ev) => ev.stopPropagation());
+  $("#logs-fbtn").onclick = () => {
+    pop.classList.toggle("open");
+    if (pop.classList.contains("open")) {
+      renderLogSugg();
+      setHint();
+      valIn.focus();
+    }
+  };
+  $("#fl-cat").addEventListener("change", () => {
+    valIn.value = "";
+    valIn.placeholder = ($("#fl-cat") as HTMLSelectElement).value === "regex"
+      ? "e.g. mongo|throttled (Enter to apply)"
+      : "type to filter values…";
+    renderLogSugg();
+    setHint();
+  });
+  valIn.addEventListener("input", () => {
+    clearTimeout(logSuggTimer);
+    logSuggTimer = window.setTimeout(renderLogSugg, 120);
+  });
+  valIn.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter") return;
+    const cat = ($("#fl-cat") as HTMLSelectElement).value;
+    const v = valIn.value.trim();
+    if (!v) return;
+    if (cat === "regex") {
+      logFilters.regex = v;
       renderLogBadges();
       renderLogList();
-    });
-  };
-  bindSelect("#fl-level", "level");
-  bindSelect("#fl-logger", "logger");
-  bindSelect("#fl-app", "app");
-  bindSelect("#fl-name", "name");
-  $("#fl-regex").addEventListener("input", () => {
-    logFilters.regex = ($("#fl-regex") as HTMLInputElement).value;
-    renderLogBadges();
-    clearTimeout(logRegexTimer);
-    logRegexTimer = window.setTimeout(() => renderLogList(), 250);
+    } else {
+      toggleLogVal(LOG_CAT_KEYS[cat], v);
+    }
+    valIn.value = "";
+    renderLogSugg();
+    setHint();
   });
+  $("#fl-clear").onclick = () => {
+    logFilters.levels = []; logFilters.loggers = []; logFilters.apps = [];
+    logFilters.names = []; logFilters.regex = "";
+    renderLogBadges();
+    renderLogList();
+    renderLogSugg();
+    setHint();
+  };
   load();
 }
 
