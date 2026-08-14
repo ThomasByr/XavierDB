@@ -122,15 +122,16 @@ once per session.
 
 ## Files
 
-| file                          | purpose                                                           |
-| ----------------------------- | ----------------------------------------------------------------- |
-| `.env.example`                | documented template — copy it to `.env`                           |
-| `.env`                        | host/port, MongoDB URI, workers, TLS paths, dashboard credentials |
-| `authorized_keys.yml`         | app credentials (Argon2id hashes) + permissions                   |
-| `config`                      | binary settings file (dashboard-editable, undo/redo history)      |
-| `config.bak…`                 | automatic backups of the config file                              |
-| `authorized_keys.yml.example` | documented permissions template                                   |
-| `examples/`                   | standalone crate with 8 runnable client examples (see its README) |
+| file                          | purpose                                                                     |
+| ----------------------------- | --------------------------------------------------------------------------- |
+| `.env.example`                | documented template — copy it to `.env`                                     |
+| `.env`                        | host/port, MongoDB URI, workers, TLS paths, dashboard credentials           |
+| `authorized_keys.yml`         | app credentials (Argon2id hashes) + permissions                             |
+| `config`                      | binary settings file (dashboard-editable, undo/redo history)                |
+| `config.bak…`                 | automatic backups of the config file                                        |
+| `authorized_keys.yml.example` | documented permissions template                                             |
+| `tests/`                      | integration battery: 97 black-box HTTP tests + `bootstrap.sh` fixture setup |
+| `examples/`                   | standalone crate with 8 runnable client examples (see its README)           |
 
 See `docs/API_REFERENCE.md`, `docs/CONFIGURATION.md`, `docs/ADMIN_GUIDE.md` for details.
 
@@ -166,7 +167,7 @@ docker compose up --build -d
 ```bash
 npm install        # only for rebuilding the dashboard TypeScript
 npm run build      # compiles src/assets/ts/app.ts -> src/assets/app.js
-cargo test         # unit tests (config, permissions, cursors, auth)
+cargo test         # unit + integration tests (tests/ needs a running server + MongoDB)
 cargo run
 ```
 
@@ -174,3 +175,44 @@ cargo run
 
 The dashboard is embedded into the binary at compile time — no external files
 needed at runtime.
+
+## Tests
+
+Two tiers, both launched with `cargo test` (44 unit + 97 integration = 141):
+
+- **Inline unit tests** live in `src/` next to the code (`#[cfg(test)]`
+  modules): config-file round-trips and backup rotation, permission parsing
+  and layering, keyset-cursor construction and tamper rejection, projection
+  parse/union/strip, extended-JSON round-trips, error sanitization.
+- **Integration battery** in `tests/` — black-box HTTP tests against a
+  running server + MongoDB, with multiple apps and real-world scenarios:
+  auth flows, the permission matrix (globs, name-vs-app layering, blocking),
+  CRUD verbs and extended-JSON data, filters/sorts/projections/keyset
+  pagination (incl. NaN and array edge cases), `/ls` and `/health`, the
+  dashboard API (perms/config/block/weight/metrics), file-watcher reloads,
+  and multi-app scenarios like concurrent writers and app deletion mid-flight.
+
+Commands (a running server + MongoDB are required for the integration
+battery; see below):
+
+```bash
+cargo test                              # everything: 44 unit + 97 integration
+cargo test --bin XavierDB               # inline unit tests only
+cargo test --test auth_flow             # one integration suite (12 suites total)
+XDB_TEST_MONGO_URI=mongodb://127.0.0.1:27017 cargo test   # + the Mongo-backed
+                                        #   pagination-equivalence test
+```
+
+The battery needs the fixture world (6 apps + 8 databases), created once per
+machine via the dashboard API:
+
+```bash
+bash tests/bootstrap.sh --dash-user <dashboard-user> --dash-pass '<dashboard-password>'
+```
+
+It caches JWTs and the admin cookie in the system temp dir (`xdb_tb_cache`),
+so a warm run performs no Argon2id logins and stale tokens are refreshed
+automatically. On Windows the debug server binary locks itself: kill the
+server, `cargo build --tests`, restart it, then `cargo test` — and never run a
+plain `cargo build` between `cargo build --tests` and `cargo test` (it
+re-dirties the test-mode fingerprint; details in AGENTS.md §0.4).
