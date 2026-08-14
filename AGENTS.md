@@ -143,10 +143,11 @@ directory (repo root bare metal; `/app` = repo mount in Docker).
 
 | file | format | purpose | hot reload? |
 |---|---|---|---|
-| `.env` | dotenv | HOST, PORT, MONGODB_URI, MAX_WORKERS, MAX_INSERT_BATCH, TLS paths, USERNAME, PASSWORD_HASH (single-quoted!), JWT_SECRET | **No** — dotenvy reads at process start; `docker compose restart api` needed |
+| `.env` | dotenv | HOST, PORT, MONGODB_URI, MAX_WORKERS, MAX_INSERT_BATCH, TLS paths, USERNAME, PASSWORD_HASH (single-quoted!), JWT_SECRET, LOG_FILES (1–10), LOG_SIZE_MB (1–20) | **No** — dotenvy reads at process start; `docker compose restart api` needed |
 | `config` | XDB1 magic + crc32 + bincode | all tunables + history/redo/blocked | **Yes** — file watcher (500ms debounce) AND `/dashboard/api/config/reload` |
 | `config.bak…` | same | automatic backup rotation (MAX_BACKUPS=5) on save; fallback on corruption | n/a |
 | `authorized_keys.yml` | YAML | app credentials (Argon2id hashes) + layered permissions | **Yes** — file watcher (500ms debounce) + `/perms/reload` |
+| `xavierdb.log…` | text | rotating server log: current + `xavierdb.log.1..N` (env `LOG_FILES`/`LOG_SIZE_MB`, defaults 5 × 10 MB); the Logs tab reads these files — no in-memory ring | n/a (env-only settings) |
 
 Startup behavior (`main.rs`):
 - `.env` missing → written from `include_str!("../.env.example")` (template
@@ -412,9 +413,9 @@ browser (API contracts verified via curl only — see §9 gaps).
   session cookie; errors same `{error, code, status}` shape): login/logout/
   session, metrics (big poll payload), block/unblock, app_weight, perms
   GET/POST(full-merge)/reload, databases, config GET/POST/undo/redo/reload/
-  reset/revert/export/import, logs (structured in-memory ring, cap 3000,
-  every console line incl. eprintln/panics; ?limit&before paging + app/name
-  facets). See §6.
+  reset/revert/export/import, logs (rotating FILES on disk, env-configured
+  LOG_FILES/LOG_SIZE_MB — no in-memory ring; ?limit&before paging + app/name
+  facets; every console line incl. eprintln/panics). See §6.
 - UI architecture details (badge permission editor, detached scopes, weight
   popover, config slider form): kept in notebook `xavierdb-dashboard-ui`; the
   essential contracts are in §6.
@@ -477,10 +478,11 @@ validation) map to 400; duplicate keys → 409.
   notebook `xavierdb-dashboard-api` for exact ranges); undo/redo/reload
   (fallback to config.bak on corruption, returns `warning`)/revert
   `{index}`/reset/export (JSON attachment)/import.
-- `GET /dashboard/api/logs` → `{lines:[{seq, raw, level, app, name}], total,
-  apps, names}` (ring cap 3000; `?limit=N` (0 = all), `?before=<seq>` for
-  load-older paging; `apps`/`names` = distinct identities seen in the ring,
-  for the client-side filter dropdowns).
+- `GET /dashboard/api/logs` → `{lines:[{seq, raw, level, logger, app, name}],
+  total, apps, names, loggers, retention:{files, size_mb, path}}` — reads the
+  ROTATING LOG FILES (xavierdb.log + .1..N, env LOG_FILES/LOG_SIZE_MB, no
+  in-memory ring); `?limit=N` (0 = all), `?before=<seq>` load-older paging;
+  `apps`/`names`/`loggers` = facets from a bounded scan (last 2000 lines).
 - `GET /dashboard/api/databases` → `{databases:[{name, collections}],
   unavailable}` — admin-only, unfiltered (client-side equivalent: `/ls`).
 
