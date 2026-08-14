@@ -12,40 +12,45 @@ it so it stays accurate and self-contained.
 ## 0. Agent rules (read first)
 
 1. **Python: always `uv run python` (or `uv run --with <pkg> python -c "..."`),
-   never system `python`.** On this machine the system `python` is a Microsoft
-   Store alias stub; `uv` (0.11.x) provides a managed interpreter on demand
-   (verified: Python 3.14 via uv). Example: `uv run --with pyyaml python -c "import yaml"`.
+   never a system `python`.** A system interpreter may be missing, be an
+   unusable stub, or be the wrong version — `uv` fetches a managed interpreter
+   on demand (verified: Python 3.14 via uv 0.11.x). If `uv` is absent, install
+   it with the official installer (see §8 for detection + install). Example:
+   `uv run --with pyyaml python -c "import yaml"`.
 2. **Never `git commit`.** The user handles all commits (their GPG signing is
    misconfigured; commits fail anyway). Make changes in the working tree only.
-3. **This machine has NO Docker** (not installed, not on PATH, no Docker
-   Desktop — verified). Never try to run `docker` here; always run bare metal
-   (§4.1). The compose/Docker setup targets other machines and is untested.
-4. **On Windows the debug binary locks itself while running** — `cargo build`
-   fails ("Accès refusé") until the server is killed. Restart ritual (this
-   machine, Windows — each step a SEPARATE bash command):
-   1. `taskkill //F //IM XavierDB.exe` → verify down (`curl /health` fails)
+3. **Docker is optional.** If `docker` and the compose plugin are not on PATH
+   (`command -v docker && docker --version && docker compose version`), run
+   bare metal (§4.1). The compose/Docker setup (§4.2) is UNVERIFIED — it has
+   never been run anywhere yet.
+4. **Some OSes refuse to overwrite a running executable** — `cargo build`
+   fails until the server is killed (on the dev machine the error is
+   "Accès refusé"). Restart ritual (each step a SEPARATE shell command; the
+   start must be its own command — a shell that times out can kill the
+   disowned server: keep commands short and use `--max-time` on curls):
+   1. stop the server by process name — POSIX: `pkill XavierDB`; Windows:
+      `taskkill //F //IM XavierDB.exe` (plain `taskkill /F /IM XavierDB.exe`
+      in non-MSYS shells). Verify down (`curl /health` fails).
    2. `cargo build --tests` (rebuilds the server binary AND keeps the
       test-mode fingerprints fresh)
-   3. start with
-      `cd /c/Users/tbouy/code/XavierDB && ./target/debug/XavierDB.exe >> /tmp/xdb.log 2>&1 & disown`
-      — the start MUST be its own bash command (not chained). A bash command
-      that times out can kill the disowned server: keep commands short and
-      use `--max-time` on curls.
+   3. start detached (own command), e.g.
+      `./target/debug/XavierDB >> /tmp/xdb.log 2>&1 & disown`
+      (the binary is `XavierDB.exe` on Windows).
    **Trap:** never run plain `cargo build` between `cargo build --tests` and
    `cargo test` — the normal-mode build re-invalidates the test-mode bin
    fingerprint (mongodb is built as two separate units, one per graph) and
-   `cargo test` then tries to relink `target/debug/XavierDB.exe` → lock.
-   The only clean sequence is: kill → `cargo build --tests` → start → `cargo test`.
-   On Linux/macOS the binary is `./target/debug/XavierDB`
-   (no `.exe`), rebuilds work while the server runs, and stopping it is
-   `pkill XavierDB` (or `kill <pid>`).
+   `cargo test` then tries to relink the server binary → lock. `cargo test
+   --no-run` has the same effect. The only clean sequence is:
+   kill → `cargo build --tests` → start → `cargo test`. `cargo check` is safe
+   while the server runs.
 5. Consult the notebooks (§9) for TODOs and small remarks before starting
    work; after work, update AGENTS.md (and the notebook pages) so both stay
    current. AGENTS.md must remain standalone and ready at all times.
-6. `.env` is a protected path for bash on this machine (Windows) — read it via
-   `read`/`cat` with care; `PASSWORD_HASH` is single-quoted in the file.
+6. `.env` may be awkward to touch from some shells (a protected path on the
+   dev machine) — read it via `read`/`cat` with care; `PASSWORD_HASH` is
+   single-quoted in the file.
 7. Credentials are machine-local: read them from `.pi/notes/credentials.md`
-   (gitignored — never commit or copy them into docs/AGENTS.md). See §8.2 for
+   (gitignored — never commit or copy them into docs/AGENTS.md). See §8.1 for
    how to obtain or regenerate them on a fresh machine.
 
 ---
@@ -58,7 +63,7 @@ granular permissions (`authorized_keys.yml`), adaptive per-app document
 limits, a binary config file with undo/redo history, and an embedded
 Material-3-ish admin dashboard SPA (no JS libraries, no external fonts).
 Edition 2024. No Python/Node at runtime (Node only at build time for
-the dashboard TypeScript). Cross-platform Rust; developed on Windows.
+the dashboard TypeScript). Cross-platform Rust; no OS-specific code at runtime.
 
 Routes (top level, `src/main.rs`):
 
@@ -116,7 +121,7 @@ XavierDB/
 │       ├── index.html           # static shell (login + app shell)  [static]
 │       ├── styles.css           # design tokens + all styles              [static]
 │       ├── app.js               # GENERATED by esbuild — never hand-edit
-│       └── ts/app.ts            # dashboard SPA source (~1750 lines TS) — edit here
+│       └── ts/app.ts            # dashboard SPA source (~2050 lines TS) — edit here
 ├── .env                         # local (bare-metal) env; gitignored; NOT in Docker image
 ├── config / config.bak*         # binary settings + backups; gitignored; runtime state
 ├── authorized_keys.yml          # app credentials + permissions; gitignored; runtime state
@@ -143,7 +148,7 @@ directory (repo root bare metal; `/app` = repo mount in Docker).
 
 | file | format | purpose | hot reload? |
 |---|---|---|---|
-| `.env` | dotenv | HOST, PORT, MONGODB_URI, MAX_WORKERS, MAX_INSERT_BATCH, TLS paths, USERNAME, PASSWORD_HASH (single-quoted!), JWT_SECRET, LOG_FILES (1–10), LOG_SIZE_MB (1–20) | **No** — dotenvy reads at process start; `docker compose restart api` needed |
+| `.env` | dotenv | HOST, PORT, MONGODB_URI, MAX_WORKERS, MAX_INSERT_BATCH, TLS paths, USERNAME, PASSWORD_HASH (single-quoted!), JWT_SECRET, LOG_FILES (1–10), LOG_SIZE_MB (1–20) | **No** — dotenvy reads at process start; restart the process (`docker compose restart api` in Docker) |
 | `config` | XDB1 magic + crc32 + bincode | all tunables + history/redo/blocked | **Yes** — file watcher (500ms debounce) AND `/dashboard/api/config/reload` |
 | `config.bak…` | same | automatic backup rotation (MAX_BACKUPS=5) on save; fallback on corruption | n/a |
 | `authorized_keys.yml` | YAML | app credentials (Argon2id hashes) + layered permissions | **Yes** — file watcher (500ms debounce) + `/perms/reload` |
@@ -172,25 +177,34 @@ again; invalid files → keep previous state + error log.
 
 ## 4. Build & run
 
-### 4.1 Bare metal (THIS machine — the only way to run here)
+### 4.1 Bare metal (any machine; the default when Docker isn't installed)
 
 ```bash
 npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (only if TS changed)
 # typecheck the dashboard TS (esbuild does NOT typecheck):
 #   npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
-cargo build                      # debug; on Windows fails while the server is running (file lock)
+cargo build                      # debug; on OSes that lock running executables this
+                                 #   fails while the server is running (§0.4)
 cargo test                       # 44 unit + 110 integration tests (tests/); needs a running server
                                  #   + MongoDB — see "Integration battery" below; tests talk to
                                  #   real Mongo unconditionally (XDB_TB_MONGO_URI, default
-                                 #   mongodb://localhost:27017)
+                                 #   mongodb://localhost:27017; the env-gated unit equivalence
+                                 #   test uses XDB_TEST_MONGO_URI, same default)
 ./target/debug/XavierDB          # from repo root; cwd-relative state files; no CLI args
-                                 # (Windows: ./target/debug/XavierDB.exe)
+                                 # (the binary gets a .exe suffix on Windows)
 
 # Examples (own crate, own lockfile — independent of the server build):
 cargo build --manifest-path examples/Cargo.toml
-cargo run --manifest-path examples/Cargo.toml --bin setup_projection -- --admin-pass <dashboard-password>
+cargo run --manifest-path examples/Cargo.toml --bin setup_projection -- --admin-user <dashboard-username> --admin-pass <dashboard-password>
 cargo run --manifest-path examples/Cargo.toml --bin projection
 ```
+
+Dashboard username for the setup examples = `.env` USERNAME (default
+`admin`); re-running a setup is idempotent (it refreshes the token hash).
+A second server instance can run with env overrides (e.g. `PORT=8443`)
+sharing the same cwd state files — fine for read-only testing; stop it by PID
+(`lsof -i :8443` on POSIX, `netstat -ano | grep :8443` on Windows), never by
+process name (that kills every instance).
 
 #### Integration battery (tests/ — black-box HTTP, needs server + MongoDB up)
 
@@ -217,18 +231,22 @@ xdb_tb_shared only), xdb_tb_m1 (db globs + name-level deny), xdb_tb_m2
 (POST+PATCH only), xdb_tb_m3 (single collection) — plus 8 seeded dbs.
 State-mutating tests (perms/config/block) serialize on a suite lock and
 restore state; each test uses its own collections; seeding is idempotent.
+NOTE: the `count_docs()` GET helper caps at the 200 adaptive limit — for
+readbacks of >200 docs use the mongodb driver directly (see the crud_verbs
+cap-boundary test).
 
-Windows lock gotcha: `cargo test` relinks the bin test harness (XavierDB.exe)
-whenever src/ or Cargo.toml changed — kill the server first, `cargo build
---tests`, restart the server, then `cargo test` (incremental test runs don't
-relink). Never run plain `cargo build` between `cargo build --tests` and
-`cargo test` (it re-dirties the test-mode fingerprint — see §0.4).
+Lock gotcha: on OSes that lock running executables, `cargo test` relinks the
+bin test harness whenever src/ or Cargo.toml changed — kill the server first,
+`cargo build --tests`, restart the server, then `cargo test` (incremental
+test runs don't relink). Never run plain `cargo build` between
+`cargo build --tests` and `cargo test` (it re-dirties the test-mode
+fingerprint — see §0.4).
 
-- Requires a running MongoDB (default `mongodb://localhost:27017`). This
-  machine: portable mongod 8.0.12 (see §8).
+- Requires a running MongoDB (default `mongodb://localhost:27017`) — install/
+  discover per §8 (MongoDB 8.0+ required).
 - Production-style: `cargo build --release` → `./target/release/XavierDB`.
 
-### 4.2 Docker (other machines only; NEVER tested here)
+### 4.2 Docker (optional — the compose setup is UNVERIFIED, never run anywhere yet)
 
 ```bash
 docker compose up --build -d     # builds API image + starts MongoDB + API (incremental: layer cache)
@@ -245,13 +263,21 @@ docker compose logs api          # first-run dashboard password is printed here
   (dotenvy never overrides existing env vars).
 - `develop.watch` rebuilds on source change; the repo mount does NOT hot-reload
   Rust code (binary lives at `/usr/local/bin/XavierDB`, outside `/app`).
+- On a LINUX Docker host, container writes to the repo (default config
+  creation, config.bak rotation, `.env` bootstrap) are root-owned — you may
+  need sudo to edit them; Desktop-style mounts (Docker Desktop) are
+  transparent. Fix if it bites: `user: "${UID}:${GID}"` (Linux hosts only).
 
 ### 4.3 Untested areas (be honest about these)
 
-Full Docker build (aws-lc-sys in container, cmake/perl/pkg-config install),
-healthcheck behavior, `${HOME}` interpolation on the user's Docker host,
-notify-watcher behavior inside a container, and the dashboard UI in a real
-browser (API contracts verified via curl only — see §9 gaps).
+All of the following are UNVERIFIED — development so far happened without
+Docker and without a real browser:
+
+- Full Docker build (aws-lc-sys in container, cmake/perl/pkg-config install),
+  healthcheck behavior, `${HOME}` interpolation on the user's Docker host,
+  notify-watcher behavior inside a container.
+- The dashboard UI in a real browser (API contracts verified via curl and
+  jsdom repros only — see §9 gaps).
 
 ---
 
@@ -269,6 +295,12 @@ browser (API contracts verified via curl only — see §9 gaps).
   401 with a 5s leeway; reason swallowed. Client loop: on 401 re-auth, on 403
   do NOT re-auth.
 - Blocked ids (in `config.blocked`) → 403 BLOCKED at `/auth`.
+- **The app token is shared by every name under an app** (one Argon2id hash
+  per app in authorized_keys.yml): any holder can /auth as ANY `name@app` —
+  existing or not (new names are auto-added to the yml on first login). The
+  name_id is a permission-routing label, not a credential; name-level rules
+  separate identities within the app only. Each name needs its own /auth for
+  its own JWT (sub = exact name) — see notebook `xavierdb-auth-model`.
 - Dashboard sessions: in-memory DashMap (`xdb_admin` cookie, Path=/dashboard,
   TTL `config.auth.session_ttl_hours` default 24) — **restart = re-login**.
 
@@ -320,7 +352,8 @@ browser (API contracts verified via curl only — see §9 gaps).
   [objects]}` (no filter) — always 200 `{matched_count, modified_count,
   inserted_count, upserted_count, inserted_ids, upserted_ids}` (ids in input
   order). Per element: has `_id` → upserting UpdateOne on `{_id}` with $set
-  merge (filter carries the `_id`); no `_id` → InsertOne. Same
+  merge (filter carries the `_id`); no `_id` → InsertOne. One PATCH authorize
+  covers the whole batch. Same
   `batch_to_docs` validation as POST (empty/non-object/dup-`_id`-within/
   over-cap → 400, nothing applied), `{filter, data: array}` → 400 "batch
   upsert takes no filter"; conflicts (existing `_id`/unique index) → 409
@@ -407,7 +440,7 @@ browser (API contracts verified via curl only — see §9 gaps).
 - Embedded SPA (`include_str!` at compile time, served no-cache under
   `/dashboard/`), hash-routed, 4 pages: `#/overview | #/clients | #/config |
   #/logs`. Permissions/rate-limit pages were removed (2026-08 rework).
-- TS source `src/assets/ts/app.ts` (~1750 lines) → esbuild → `src/assets/app.js`
+- TS source `src/assets/ts/app.ts` (~2050 lines) → esbuild → `src/assets/app.js`
   (generated, never hand-edit). No JS libs, no external fonts.
 - Full dashboard API surface (all under `/dashboard/api/*`, `xdb_admin`
   session cookie; errors same `{error, code, status}` shape): login/logout/
@@ -416,6 +449,19 @@ browser (API contracts verified via curl only — see §9 gaps).
   reset/revert/export/import, logs (rotating FILES on disk, env-configured
   LOG_FILES/LOG_SIZE_MB — no in-memory ring; ?limit&before paging + app/name
   facets; every console line incl. eprintln/panics). See §6.
+- Config tab: EXPLICIT save — slider edits alone don't persist (a page
+  reload discards them); an amber "unsaved changes" dirty pill is pinned to
+  the card title line (`margin-left:auto` inside the flex `h3` — never in the
+  buttons row), Save is disabled while clean, and an in-flight `configSaving`
+  guard prevents double POSTs.
+- Logs box colors are theme-aware `--logs-*` tokens, defined in ALL THREE
+  theme blocks (`:root` light, `prefers-color-scheme: dark`, forced
+  `[data-theme="dark"]`) — any new theme-aware token must land in all three.
+- Browser-behavior debugging without a browser: a jsdom repro drives the
+  SERVED bundle (fetch `/dashboard/` index.html + app.js — re-fetch after
+  EVERY rebuild, the embed is compile-time), stubs fetch/matchMedia, and
+  simulates clicks; a local copy lives in the user's temp dir (pattern in
+  notebook `xavierdb-dashboard-ui`).
 - UI architecture details (badge permission editor, detached scopes, weight
   popover, config slider form): kept in notebook `xavierdb-dashboard-ui`; the
   essential contracts are in §6.
@@ -452,6 +498,8 @@ validation) map to 400; duplicate keys → 409.
   `auth.session_ttl_hours`). Throttle SHARED with client /auth (per-IP,
   default 30/min). Argon2id verify runs on the blocking pool; unknown
   usernames verify against a fixed dummy hash (no timing oracle).
+- `POST /dashboard/api/logout` / `GET /dashboard/api/session` →
+  `{"username":"…"}`; sessions are in-memory (restart = re-login).
 - `GET /dashboard/api/metrics` — big poll payload: `{ts, qps, config:
   {poll_seconds, theme, graph_smoothing, cfg_version, perms_version,
   health_ttl_seconds, multiplier}, system:{cpu_pct, mem_pct, mem_used_mb,
@@ -477,12 +525,15 @@ validation) map to 400; duplicate keys → 409.
   undo_available, redo_available}`; `POST /config` sanitizes/clamps (see
   notebook `xavierdb-dashboard-api` for exact ranges); undo/redo/reload
   (fallback to config.bak on corruption, returns `warning`)/revert
-  `{index}`/reset/export (JSON attachment)/import.
+  `{index}`/reset/export (JSON attachment)/import. undo/redo/reload/reset are
+  POST-with-NO-body (`{}` → 400); log_level changes hot-apply (no restart).
 - `GET /dashboard/api/logs` → `{lines:[{seq, raw, level, logger, app, name}],
   total, apps, names, loggers, retention:{files, size_mb, path}}` — reads the
   ROTATING LOG FILES (xavierdb.log + .1..N, env LOG_FILES/LOG_SIZE_MB, no
   in-memory ring); `?limit=N` (0 = all), `?before=<seq>` load-older paging;
   `apps`/`names`/`loggers` = facets from a bounded scan (last 2000 lines).
+  Logs SURVIVE restarts, and `seq` (a global line number seeded by a startup
+  scan) stays stable across restarts AND rotations.
 - `GET /dashboard/api/databases` → `{databases:[{name, collections}],
   unavailable}` — admin-only, unfiltered (client-side equivalent: `/ls`).
 
@@ -500,27 +551,37 @@ validation) map to 400; duplicate keys → 409.
 
 ---
 
-## 8. Environment & machine facts (this machine)
+## 8. Environment & toolchain discovery
 
-> These facts describe THIS Windows machine. The server is cross-platform:
-> on Linux/macOS the binary has no `.exe`, processes are stopped with
-> `kill`/`pkill` instead of `taskkill`, and `/tmp` is the real system `/tmp`.
+The server is cross-platform Rust; Python and Node are build/dev-time only.
+On a fresh machine, discover what's already installed (POSIX shell syntax —
+MSYS-style shells like git-bash accept it; PowerShell/cmd need their own
+equivalents):
 
-- Windows (git-bash shell), Rust 1.97, Node v24 + npm (esbuild 0.28), uv 0.11.x
-  (Python 3.14 on demand). No system python, no Docker, no mongosh.
-- Portable MongoDB 8.0.12:
-  `%LOCALAPPDATA%\Temp\mongodb-portable\mongodb-win32-x86_64-windows-8.0.12\bin\mongod.exe
-  --dbpath C:/Users/tbouy/AppData/Local/Temp/mongodata --port 27017 --bind_ip 127.0.0.1`
-  (data dir `%TEMP%\mongodata`; NOT a service; kill `taskkill //F //IM mongod.exe`).
-  Test DBs: db1{items}, db2{coll_b}.
-- GIT: user handles commits — never commit (§0.2).
-- `.env` has NO `JWT_SECRET` on this machine → the server generates a random
-  secret per start, so ALL cached JWTs die on server restart. The battery
-  self-heals (probe → re-login), but remember this when debugging 401s after
-  a restart. Dashboard sessions are in-memory anyway (restart = re-login).
-- Test scripts/cookies kept in `%LOCALAPPDATA%\Temp` (xdb-js-example.js,
-  xdb-python-example.py, xdb-cookies.txt, xdb-perms-before/grant.json,
-  /tmp/xdb.log server log).
+| tool | when needed | detect | install if missing |
+|---|---|---|---|
+| Rust (cargo + rustc) | always | `command -v cargo && cargo --version` | rustup (https://rustup.rs); edition 2024 needs rustc ≥ 1.85 (developed on 1.97) |
+| Node + npm | build-time only (esbuild compiles the dashboard TS) | `command -v node && node --version` | nodejs.org or a version manager (nvm/fnm/volta) |
+| uv | dev scripts (managed Python on demand) | `command -v uv && uv --version` | official installer: https://docs.astral.sh/uv/ |
+| python3 | dev scripts ONLY via uv — a system interpreter is not required | `command -v python3` (informational) | none — uv fetches managed interpreters |
+| MongoDB (mongod) | runtime + integration battery | `command -v mongod && mongod --version` | official MongoDB packages; **8.0+ required** |
+| Docker + compose plugin | optional (compose deployment, §4.2) | `command -v docker && docker --version && docker compose version` | docker.com; WITHOUT Docker, run bare metal (§4.1) |
+
+Required versions / facts:
+- **MongoDB 8.0+** — PATCH upsert-many uses the driver's `bulk_write` (new
+  bulkWrite command, no legacy path; §5.3). The dev machine runs 8.0.12.
+- **Rust**: edition 2024 → rustup latest stable is fine (developed on 1.97).
+- **Node**: only at build time (esbuild 0.28); any modern LTS is fine.
+  **Python**: only dev scripts; always `uv run python` (§0.1). **mongosh** is
+  optional — shell access only; neither the server nor the battery needs it.
+- A bare-metal run needs only two things: `mongod` reachable at
+  `mongodb://localhost:27017` (override with `MONGODB_URI` in `.env`) and
+  `./target/debug/XavierDB` started from the repo root (cwd-relative state
+  files, no CLI args).
+- On the machine where this project was developed there is no Docker and no
+  system python — bare metal + uv are the norm. Machine-level details
+  (portable-mongod layout, shell quirks, ops commands) live in the notebook
+  `xavierdb-local-run`; actual credentials in §8.1.
 
 ### 8.1 Credentials (machine-local)
 
@@ -541,12 +602,16 @@ follows:
   `authorized_keys.yml` stores only the Argon2id `token_hash`, so the
   plaintext is NOT recoverable. If lost, reset via the dashboard (Clients
   view → add app / perms editor → set token, min 8 chars) or rewrite the yml
-  entry with a freshly hashed token.
+  entry with a freshly hashed token. To hash one:
+  `uv run --with argon2-cffi python -c "..."` (Argon2id PHC) — verify it
+  against the SERVER (swap `token_hash` in authorized_keys.yml → watcher
+  reload → /auth), not against the library (argon2-cffi's verify has been
+  observed broken in some environments).
 - **TLS certs** — paths are `TLS_CERT_PATH`/`TLS_KEY_PATH` in `.env`;
   regenerate with openssl (self-signed is fine for dev).
 - **MongoDB** — URI in `.env` (`MONGODB_URI`, default
-  `mongodb://localhost:27017`); this machine's portable mongod details in
-  §8 above.
+  `mongodb://localhost:27017`); install/discovery per §8; dev-machine
+  portable-mongod details in notebook `xavierdb-local-run`.
 
 ---
 
@@ -554,19 +619,25 @@ follows:
 
 The pi notebook holds the fine-grained, session-by-session knowledge. Consult
 it for TODOs and small remarks; promote anything durable into AGENTS.md when
-it becomes load-bearing. Pages (2026-08-11):
+it becomes load-bearing. Pages:
 
+- `xavierdb-agents-rewrite` — this machine-agnostic rewrite: plan, constraints, scrub inventory, absorption map
+- `xavierdb-auth-model` — auth Q&A: name_id is a routing label, shared app token, JWT claims, timing equalization
 - `xavierdb-build` — build facts, client API verification, perms test cycle, rate-computation fix history
 - `xavierdb-compose` — compose/Dockerfile decisions, runtime-state mechanics, first-run behavior, caveats
-- `xavierdb-local-run` — portable MongoDB setup, ops commands, machine conventions
 - `xavierdb-dashboard-api` — complete dashboard API reference (exact shapes from routes_admin.rs)
-- `xavierdb-dashboard-ui` — dashboard UI architecture (edit points, badge model, known gaps)
+- `xavierdb-dashboard-ui` — dashboard UI architecture (edit points, badge model, dirty indicator, jsdom harness, known gaps)
 - `xavierdb-dataset-route` — /ls rename history, cursor bug fix
 - `xavierdb-docs` — docs restructure, AGENTS.md, credentials layout
 - `xavierdb-examples` — examples/ crate: scope decisions, verified perms/dashboard-API facts, per-example contracts (DONE 2026-08-13)
+- `xavierdb-insert-many` — insert-many on POST /q: contract, driver 3.8 facts, tests (DONE 2026-08-15)
+- `xavierdb-local-run` — local run: portable MongoDB setup, ops commands, machine conventions
 - `xavierdb-projection` — GET /q projection: design spec + implementation record (DONE 2026-08-13), verified cursor/keyset mechanics, union+strip scheme, latent dotted-sort-key bug
 - `xavierdb-review` — the 3-round review campaign: per-finding verdicts, fixes, test augmentation
-- `xavierdb-test-battery` — tests/ integration battery: fixture world, bootstrap, verified behaviors + spec corrections (DONE 2026-08-14)
+- `xavierdb-test-battery` — tests/ integration battery: fixture world, bootstrap, verified behaviors + spec corrections (DONE 2026-08-15)
+- `xavierdb-upsert-many` — upsert-many on PATCH /q: contract, driver 3.8 facts, tests (DONE 2026-08-15)
+
+---
 
 ## 10. Known limits & open items
 
@@ -592,16 +663,18 @@ Known gaps / things to check:
 - **Verified live by the battery (2026-08-14)** — behaviors worth knowing:
   - Include-only projections STRIP `_id` unless explicitly requested: `{name:1}` → docs have only `name`; `{name:1,_id:1}` keeps it. `{_id:0}` alone returns everything except `_id` (FIXED 2026-08-14 — it previously collapsed to `{}`).
   - Dots are valid in COLLECTION names (`bad..name` OK) — 400 only for dots in the db segment. MongoDB 8.0.12 also ACCEPTS `$`-prefixed field names in stored documents (they round-trip literally).
-  - Extraction failures (malformed or missing-field JSON bodies, malformed query strings) → **400 `{error, code:"BAD_REQUEST", status:400}`** (FIXED 2026-08-14 — previously axum's plain-text rejections, incl. 422 for missing fields, leaked through).
+  - Extraction failures (malformed or missing-field JSON bodies, malformed query strings) → **400 `{error, code:"BAD_REQUEST", status:400}`** (FIXED 2026-08-14 — previously axum's plain-text rejections, incl. 422 for missing fields, leaked through). `filter=%zz` decodes leniently → INVALID_FILTER (not a query rejection); `limit=abc` → BAD_REQUEST via the custom extractor.
   - Missing/null sort values sort BEFORE NaN ascending (Mongo 8 order: null < NaN < numbers). `$gte` on a Decimal128 matches int/double values too (cross-type).
   - Watcher: a reload re-stamps the loaded bytes, so a byte-identical restore of authorized_keys.yml IS picked up automatically (FIXED 2026-08-14 — it previously required an explicit `/perms/reload`).
   - `truncated:true` + `limit_applied` = enforced cap when the client requested more than the adaptive limit; `next_cursor` only appears when the set was actually cut.
   - Insert-many (2026-08-15): `data` as array → `insert_many` (cap 1000, empty/non-object element/dup-`_id`-within-batch → 400 with NOTHING inserted; dup against existing data → 409 with ordered semantics, docs before the dup remain). Driver 3.8 facts the battery verified: `insert_many` write failures arrive as `ErrorKind::InsertMany(InsertManyError)` (NOT `WriteFailure::WriteError` — error.rs needed a dedicated arm) and `InsertManyResult.inserted_ids` is a `HashMap<usize, Bson>` (NOT BTreeMap — dbq.rs sorts by index so `inserted_ids` keeps input order). Batch size counts into per-client rate accounting (rps).
+- **Array `_id` (`{"_id":[]}`) maps to 500** — Mongo error code 53 ("_id" cannot be an array) is not in the client-code list in error.rs; arguably a client error → 400. Pre-existing for single writes, consistent for the insert/upsert batch arms (flagged 2026-08-15, not changed).
 - **Dotted sort keys (`{"a.b":1}`) paginate incorrectly** — pre-existing latent bug (found 2026-08-11 during projection design; code-verified, not live-verified): `bson::Document::get` is an exact top-level lookup (no dotted resolution), so `make_next_cursor` reads a Null boundary and the array-sort guard goes blind → wrong pagination on collections sorted by nested fields. Fix = `get_path` helper + equivalence-test guard; treat as separate follow-up.
-- Dashboard UI never browser-tested (API contracts verified via curl only) —
-  first browser pass may reveal weight-popover overflow, legend wrap, slider feel.
-- Docker setup never run (no Docker on this machine) — build, healthcheck,
-  volume, and in-container watcher behavior unverified.
+- Dashboard UI not yet browser-tested (API contracts verified via curl and
+  jsdom repros; see §5.8) — a first browser pass may reveal weight-popover
+  overflow, legend wrap, slider feel.
+- Docker setup never run (development machine has no Docker) — build,
+  healthcheck, volume, and in-container watcher behavior unverified.
 - Theme sync only happens on overview route entry; search input resets after
   a perms widget save (both pre-existing, cosmetic).
 - `config` hot-reload + atomic-rename editors (vim etc.) may detach the notify
@@ -613,6 +686,6 @@ live by tests/pagination.rs `nan_sort_paginates` + `array_sort_guard` through
 the server's own Mongo connection; crud_verbs.rs talks to Mongo directly
 with XDB_TB_MONGO_URI, default mongodb://localhost:27017), full
 auth→/q→/ls→health curl cycle, perms watcher restore cycle (see notebook
-`xavierdb-build` for the exact snapshot/restore ritual). When src/ changed on
-Windows, the battery needs the kill → `cargo build --tests` → restart ritual
-first (§4.1).
+`xavierdb-build` for the exact snapshot/restore ritual). When src/ changed,
+the battery needs the kill → `cargo build --tests` → restart ritual first
+(§0.4).
