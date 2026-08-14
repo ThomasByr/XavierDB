@@ -96,7 +96,7 @@ XavierDB/
 │   ├── bootstrap.sh               #   one-time fixture bootstrap (idempotent; dashboard creds from env or credentials.md)
 │   └── auth_flow.rs, crud_verbs.rs, dashboard_api.rs, edge_data.rs, meta_endpoints.rs,
 │       multi_app.rs, pagination.rs, perms_matrix.rs, projection.rs, query_filters.rs,
-│       smoke.rs, watcher_reload.rs   # 102 tests, ~30 s full run
+│       smoke.rs, watcher_reload.rs   # 108 tests, ~30 s full run
 ├── .env.example                 # documented env template (copy to .env)
 ├── authorized_keys.yml.example  # documented permissions template
 ├── src/
@@ -178,7 +178,7 @@ npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (on
 # typecheck the dashboard TS (esbuild does NOT typecheck):
 #   npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
 cargo build                      # debug; on Windows fails while the server is running (file lock)
-cargo test                       # 44 unit + 102 integration tests (tests/); needs a running server
+cargo test                       # 44 unit + 108 integration tests (tests/); needs a running server
                                  #   + MongoDB — see "Integration battery" below
                                  # XDB_TEST_MONGO_URI=mongodb://127.0.0.1:27017 additionally runs the
                                  #   Mongo-backed pagination-equivalence test (scratch db, dropped after)
@@ -193,7 +193,7 @@ cargo run --manifest-path examples/Cargo.toml --bin projection
 
 #### Integration battery (tests/ — black-box HTTP, needs server + MongoDB up)
 
-102 tests across 12 files (auth_flow, perms_matrix, meta_endpoints, crud_verbs,
+108 tests across 12 files (auth_flow, perms_matrix, meta_endpoints, crud_verbs,
 edge_data, query_filters, projection, pagination, dashboard_api, multi_app,
 watcher_reload, smoke). Every /auth costs ~5 s Argon2id and shares a 30/min
 per-IP throttle, so JWTs + the admin cookie are cached in `<temp>/xdb_tb_cache`
@@ -313,10 +313,19 @@ browser (API contracts verified via curl only — see §9 gaps).
   clients send plain `data: {field: value}`, NOT `{$set:…}`. Batch inserts
   count their document count into per-client rate accounting (rps) — a
   1000-doc batch reads as 1000 work units (routes_q.rs `record_request`).
-  **No upsert-many**: batch writes are insert-only; upserts stay single-document
-  (PATCH `{filter, data}`).
+  **Upsert-many is on PATCH** (see below): POST batches are insert-only.
 - PUT = update (404 if 0 matched). PATCH = upsert (200 updated / 201
-  inserted). DELETE `{filter}` → `{deleted_count}` (404 if 0).
+  inserted) with `{filter, data: object}`; **upsert-many** with `{data:
+  [objects]}` (no filter) — always 200 `{matched_count, modified_count,
+  inserted_count, upserted_count, inserted_ids, upserted_ids}` (ids in input
+  order). Per element: has `_id` → upserting UpdateOne on `{_id}` with $set
+  merge (filter carries the `_id`); no `_id` → InsertOne. Same
+  `batch_to_docs` validation as POST (empty/non-object/dup-`_id`-within/
+  over-cap → 400, nothing applied), `{filter, data: array}` → 400 "batch
+  upsert takes no filter"; conflicts (existing `_id`/unique index) → 409
+  ordered semantics, docs before the failing element remain (dbq.rs
+  `bulk_upsert` via driver `Client::bulk_write`, requires MongoDB 8.0+;
+  batch size counts into rate accounting). DELETE `{filter}` → `{deleted_count}` (404 if 0).
 - Cursor pagination: keyset, opaque base64url cursor
   `{v, db, coll, sort:[[field,dir]..], last:[canonical-extjson..]}` with `_id`
   tiebreaker; listing cursors use plain JSON-string values and require
@@ -420,7 +429,7 @@ browser (API contracts verified via curl only — see §9 gaps).
 | `GET /q/{db}/{coll}` | Bearer or cookie | query: `filter`/`sort`/`projection` URL-encoded JSON, `limit`, `cursor`; keyset pagination |
 | `POST /q/{db}/{coll}` | Bearer | insert (no filter) / update (filter) — data auto-`$set` |
 | `PUT /q/{db}/{coll}` | Bearer | update, 404 if 0 matched |
-| `PATCH /q/{db}/{coll}` | Bearer | upsert (200 updated / 201 inserted) |
+| `PATCH /q/{db}/{coll}` | Bearer | upsert (200 updated / 201 inserted); array `data` = upsert-many (200) |
 | `DELETE /q/{db}/{coll}` | Bearer | `{filter}` → `{deleted_count}`, 404 if 0 |
 | `GET /ls` | Bearer | flat list of listable dbs; `?db=X` → collections |
 | `GET /health` | public | health doc; 200 ok / 503 otherwise |
@@ -591,8 +600,8 @@ Known gaps / things to check:
 - `config` hot-reload + atomic-rename editors (vim etc.) may detach the notify
   watcher — restart re-attaches.
 
-Verification checkpoints after code changes: `cargo test` (146 tests — 44
-unit + 102 integration; with XDB_TEST_MONGO_URI set it also runs the keyset
+Verification checkpoints after code changes: `cargo test` (152 tests — 44
+unit + 108 integration; with XDB_TEST_MONGO_URI set it also runs the keyset
 pagination-equivalence test against real MongoDB — phase 1: NaN/±Inf datasets
 must match a full scan exactly; phase 2: array datasets must either match
 exactly or stop with the explicit 400, never diverge silently), full
