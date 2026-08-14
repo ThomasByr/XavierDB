@@ -1388,6 +1388,20 @@ function addAppDialog() {
 /* ============================= config ============================= */
 
 let configData: any = null;
+let configDirty = false;
+let configSaving = false;
+
+function markCfgDirty() {
+  if (configDirty) return;
+  configDirty = true;
+  updateCfgSave();
+}
+function updateCfgSave() {
+  const btn = $("#cfg-save") as HTMLButtonElement | null;
+  if (btn) btn.disabled = configSaving || !configDirty;
+  const d = $("#cfg-dirty");
+  if (d) d.classList.toggle("hidden", !configDirty);
+}
 
 function renderConfig() {
   const v = $("#view");
@@ -1396,6 +1410,7 @@ function renderConfig() {
     el("h3", {}, ["Configuration (binary file `config` — settings, adaptive rate limiting, blocked list)"]),
     el("div", { class: "row", style: "margin-bottom:12px" }, [
       el("button", { id: "cfg-save", class: "btn" }, ["Save"]),
+      el("span", { id: "cfg-dirty", class: "badge warn hidden", style: "margin-left:auto" }, ["unsaved changes"]),
       el("button", { id: "cfg-undo", class: "btn btn-outline" }, ["Undo"]),
       el("button", { id: "cfg-redo", class: "btn btn-outline" }, ["Redo"]),
       el("button", { id: "cfg-reload", class: "btn btn-outline" }, ["Reload from disk"]),
@@ -1487,7 +1502,7 @@ function renderConfigForm() {
         top.append(out);
         const inp = el("input", { type: "range", min: String(f.min), max: String(f.max), step: String(f.step), value: String(val) }) as HTMLInputElement;
         inp.dataset.path = f.path;
-        inp.addEventListener("input", () => { out.textContent = fmtVal(f, parseFloat(inp.value)); });
+        inp.addEventListener("input", () => { out.textContent = fmtVal(f, parseFloat(inp.value)); markCfgDirty(); });
         field.append(top, inp);
         card.append(field);
       } else if (f.kind === "select") {
@@ -1500,12 +1515,14 @@ function renderConfigForm() {
           sel.append(opt);
         }
         field.append(sel);
+        sel.addEventListener("change", markCfgDirty);
         card.append(field);
       } else {
         const field = el("div", { class: "field" });
         field.append(el("label", {}, [f.label]));
         const inp = el("input", { type: "text", value: String(curVal(f.path)), spellcheck: "false" });
         inp.dataset.path = f.path;
+        inp.addEventListener("input", markCfgDirty);
         field.append(inp);
         card.append(field);
       }
@@ -1551,8 +1568,7 @@ function renderConfigForm() {
   });
 
   $("#cfg-save").onclick = async () => {
-    const btn = $("#cfg-save") as HTMLButtonElement;
-    if (btn.disabled) return; // in-flight guard: double-save would create duplicate history entries
+    if (configSaving) return; // in-flight guard: double-save would create duplicate history entries
     const newCfg = structuredClone(c);
     for (const inp of Array.from(form.querySelectorAll("input[data-path], select[data-path]"))) {
       const ip = inp as HTMLInputElement;
@@ -1561,13 +1577,14 @@ function renderConfigForm() {
       else if (ip.tagName === "SELECT") newCfg[parts[0]][parts[1]] = (ip as unknown as HTMLSelectElement).value;
       else newCfg[parts[0]][parts[1]] = ip.value;
     }
-    btn.setAttribute("disabled", "");
+    configSaving = true;
+    updateCfgSave();
     try {
       configData = await api("/config", { method: "POST", body: JSON.stringify({ config: newCfg }) });
       snack("config saved");
       renderConfigForm();
     } catch (e: any) { snack(e.message); }
-    finally { btn.removeAttribute("disabled"); }
+    finally { configSaving = false; updateCfgSave(); }
   };
   $("#cfg-undo").onclick = async () => { const r = await api("/config/undo", { method: "POST" }); loadConfig(); snack(r.ok ? "undone" : "nothing to undo"); };
   $("#cfg-redo").onclick = async () => { const r = await api("/config/redo", { method: "POST" }); loadConfig(); snack(r.ok ? "redone" : "nothing to redo"); };
@@ -1611,6 +1628,9 @@ function renderConfigForm() {
     box.append(actions);
     $("#dialog").classList.remove("hidden");
   };
+
+  configDirty = false;
+  updateCfgSave();
 }
 
 /* ============================= logs ============================= */
