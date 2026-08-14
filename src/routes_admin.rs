@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use axum::Json;
-use axum::extract::{ConnectInfo, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use serde::Deserialize;
@@ -75,8 +75,10 @@ pub async fn login(
         .await
         .unwrap_or(false);
     if !user_ok || !ok {
+        tracing::warn!("admin login failed: {}", body.username.chars().take(60).collect::<String>());
         return Err(ApiError::unauthorized());
     }
+    tracing::info!("admin login OK: {}", body.username.chars().take(60).collect::<String>());
     let token = create_admin_session(&state, &body.username);
     // cookie lifetime follows the server-side session TTL (configurable)
     let max_age = state
@@ -383,6 +385,7 @@ fn save_config(state: &AppState, cfg: &ConfigFile) -> Result<(), ApiError> {
     let bytes = crate::config::save_to_disk(cfg, &state.config_path)
         .map_err(|e| ApiError::internal(format!("config save failed: {e}")))?;
     *state.last_config_written.lock().unwrap() = Some(bytes);
+    crate::state::apply_log_level(&cfg.dashboard.log_level);
     *state.config.write().unwrap() = cfg.clone();
     state.cfg_version.fetch_add(1, Ordering::Relaxed);
     Ok(())
@@ -604,6 +607,7 @@ pub async fn config_reload(
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&state, &headers)?;
     let (cfg, err) = crate::config::load_from_disk(&state.config_path);
+    crate::state::apply_log_level(&cfg.dashboard.log_level);
     *state.config.write().unwrap() = cfg;
     state.cfg_version.fetch_add(1, Ordering::Relaxed);
     Ok(Json(json!({ "ok": true, "warning": err })))
@@ -715,19 +719,39 @@ pub async fn databases(
     Ok(Json(json!({ "databases": dbs, "unavailable": false })))
 }
 
+#[derive(Deserialize)]
+pub struct LogsQuery {
+    /// max entries (0 = all); the dashboard pages with 300 + before=<seq>
+    pub limit: Option<usize>,
+    /// only entries with seq < before (load-older paging)
+    pub before: Option<u64>,
+}
+
 pub async fn logs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(q): Query<LogsQuery>,
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&state, &headers)?;
-    let lines = state
-        .logs
-        .lock()
-        .unwrap()
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
-    Ok(Json(json!({ "lines": lines })))
+    let limit = q.limit.unwrap_or(0).min(10_000);
+    let (entries, total, apps, names, loggers) = crate::state::log_snapshot(limit, q.before);
+    Ok(Json(json!({
+        "lines": entries
+            .iter()
+            .map(|e| json!({
+                "seq": e.seq,
+                "raw": e.raw,
+                "level": e.level,
+                "logger": e.logger,
+                "app": e.app,
+                "name": e.name,
+            }))
+            .collect::<Vec<_>>(),
+        "total": total,
+        "apps": apps,
+        "names": names,
+        "loggers": loggers,
+    })))
 }
 
 #[cfg(test)]
@@ -765,13 +789,18 @@ mod tests {
     fn sanitize_theme_and_ranges() {
         let mut c = cfg();
         c.dashboard.theme = "neon".into();
-        c.dashboard.poll_seconds = 0;
+        c.dashboard.poll_seconds = 0.05;
+        c.dashboard.log_level = "verbose".into();
         c.health.cache_ttl_seconds = 999_999;
         c.auth.session_ttl_hours = 0;
         sanitize_config(&mut c);
         assert_eq!(c.dashboard.theme, "system");
-        assert_eq!(c.dashboard.poll_seconds, 1);
+        assert_eq!(c.dashboard.poll_seconds, 0.1);
+        assert_eq!(c.dashboard.log_level, "info");
         assert_eq!(c.health.cache_ttl_seconds, 3600);
         assert_eq!(c.auth.session_ttl_hours, 1);
+        c.dashboard.poll_seconds = 9999.0;
+        sanitize_config(&mut c);
+        assert_eq!(c.dashboard.poll_seconds, 3600.0);
     }
 }

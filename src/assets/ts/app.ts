@@ -244,7 +244,7 @@ function stopPolling() {
 function restartPolling() {
   clearInterval(pollTimer);
   if (pollEnabled) {
-    pollTimer = window.setInterval(poll, Math.max(1, pollSeconds) * 1000);
+    pollTimer = window.setInterval(poll, Math.max(0.1, pollSeconds) * 1000);
     poll();
   }
 }
@@ -1409,6 +1409,10 @@ function renderConfig() {
     el("div", { id: "cfg-form", class: "config-grid" }),
   ]));
   v.append(el("div", { class: "card" }, [
+    el("h3", {}, ["Blocked identifiers"]),
+    el("div", { id: "cfg-blocked", class: "history-list" }),
+  ]));
+  v.append(el("div", { class: "card" }, [
     el("h3", {}, ["Change history (click an entry to revert to that state)"]),
     el("div", { id: "cfg-history", class: "history-list" }),
   ]));
@@ -1438,27 +1442,26 @@ function renderConfigForm() {
   const groups: [string, string | null, CfgField[]][] = [
     ["General", null, [
       { path: "global.permission_file", label: "Permissions file", kind: "text" },
-      { path: "global.jwt_token_lifetime_minutes", label: "JWT lifetime", kind: "range", min: 1, max: 43200, step: 5, unit: "min" },
-      { path: "auth.max_per_minute_per_ip", label: "Auth attempts per IP / minute", kind: "range", min: 1, max: 10000, step: 10 },
-      { path: "auth.session_ttl_hours", label: "Admin session TTL", kind: "range", min: 1, max: 720, step: 1, unit: "h" },
+      { path: "global.jwt_token_lifetime_minutes", label: "JWT lifetime", kind: "range", min: 30, max: 1440, step: 30, unit: "min" },
+      { path: "auth.max_per_minute_per_ip", label: "Auth attempts per IP / minute", kind: "range", min: 1, max: 100, step: 1 },
+      { path: "auth.session_ttl_hours", label: "Admin session TTL", kind: "range", min: 1, max: 72, step: 1, unit: "h" },
     ]],
     ["Rate limiting", "Every tick (tick_seconds) each app's limit shrinks by 1/(1 + latency_sensitivity·lat_err + pressure_sensitivity·pressure) under load, and grows by growth_rate when healthy. enforced = clamp(round(limit · multiplier · weight), min, max) — the per-app weight is set in Clients.", [
-      { path: "rate_limit.multiplier", label: "Master multiplier", kind: "range", min: 0.05, max: 20, step: 0.05, prefix: "×" },
-      { path: "rate_limit.target_latency_ms", label: "Target p50 latency", kind: "range", min: 1, max: 60000, step: 10, unit: "ms" },
-      { path: "rate_limit.latency_sensitivity", label: "Latency sensitivity", kind: "range", min: 0, max: 20, step: 0.1 },
-      { path: "rate_limit.pressure_sensitivity", label: "Pressure sensitivity", kind: "range", min: 0, max: 20, step: 0.1 },
+      { path: "rate_limit.multiplier", label: "Master multiplier", kind: "range", min: 0.1, max: 10, step: 0.1, prefix: "×" },
+      { path: "rate_limit.target_latency_ms", label: "Target p50 latency", kind: "range", min: 10, max: 500, step: 10, unit: "ms" },
+      { path: "rate_limit.latency_sensitivity", label: "Latency sensitivity", kind: "range", min: 0.1, max: 10, step: 0.1 },
+      { path: "rate_limit.pressure_sensitivity", label: "Pressure sensitivity", kind: "range", min: 0.1, max: 10, step: 0.1 },
       { path: "rate_limit.growth_rate", label: "Growth rate per tick", kind: "range", min: 1, max: 2, step: 0.01, prefix: "×" },
-      { path: "rate_limit.min_limit", label: "Min docs per page", kind: "range", min: 1, max: 10000, step: 10 },
-      { path: "rate_limit.max_limit", label: "Max docs per page", kind: "range", min: 1, max: 10000, step: 10 },
-      { path: "rate_limit.tick_seconds", label: "Tick interval", kind: "range", min: 1, max: 3600, step: 1, unit: "s" },
+      { path: "rate_limit.min_limit", label: "Min docs per page", kind: "range", min: 1, max: 100, step: 1 },
+      { path: "rate_limit.max_limit", label: "Max docs per page", kind: "range", min: 10, max: 1000, step: 10 },
+      { path: "rate_limit.tick_seconds", label: "Tick interval", kind: "range", min: 1, max: 60, step: 1, unit: "s" },
       { path: "rate_limit.ema_alpha", label: "Rate smoothing α", kind: "range", min: 0.01, max: 0.9, step: 0.01 },
     ]],
-    ["Health", null, [
-      { path: "health.cache_ttl_seconds", label: "Health cache TTL", kind: "range", min: 1, max: 3600, step: 1, unit: "s" },
-    ]],
     ["Dashboard", null, [
-      { path: "dashboard.poll_seconds", label: "Dashboard poll interval", kind: "range", min: 1, max: 3600, step: 1, unit: "s" },
-      { path: "dashboard.graph_smoothing", label: "Graph smoothing window", kind: "range", min: 1, max: 60, step: 1, unit: "samples" },
+      { path: "dashboard.poll_seconds", label: "Dashboard poll interval", kind: "range", min: 0.1, max: 10, step: 0.1, unit: "s" },
+      { path: "dashboard.graph_smoothing", label: "Graph smoothing window", kind: "range", min: 1, max: 20, step: 1, unit: "samples" },
+      { path: "health.cache_ttl_seconds", label: "Health cache TTL", kind: "range", min: 1, max: 60, step: 1, unit: "s" },
+      { path: "dashboard.log_level", label: "Log level", kind: "select", options: [["info", "info"], ["debug", "debug (per-request lines)"]] },
       { path: "dashboard.theme", label: "Theme", kind: "select", options: [["system", "System"], ["light", "Light"], ["dark", "Dark"]] },
     ]],
   ];
@@ -1510,19 +1513,18 @@ function renderConfigForm() {
     form.append(card);
   }
 
-  // blocked list
-  const card = el("div", { class: "card", style: "margin-bottom:0" });
-  card.append(el("h3", {}, ["Blocked identifiers"]));
-  if (c.blocked.length === 0) card.append(el("div", { class: "muted" }, ["nothing blocked"]));
+  // blocked list (full-width card below the columns, history-list layout)
+  const blk = $("#cfg-blocked");
+  blk.innerHTML = "";
+  if (c.blocked.length === 0) blk.append(el("div", { class: "muted" }, ["nothing blocked"]));
   for (const id of c.blocked) {
-    const row = el("div", { class: "row" });
+    const row = el("div", {});
     row.append(el("span", { class: "badge bad" }, [esc(id)]));
-    const ub = el("button", { class: "btn btn-small btn-outline" }, ["unblock"]);
+    const ub = el("button", { class: "btn btn-small btn-outline", style: "margin-left:auto" }, ["unblock"]);
     ub.onclick = async () => { await api("/unblock", { method: "POST", body: JSON.stringify({ id }) }); loadConfig(); };
     row.append(ub);
-    card.append(row);
+    blk.append(row);
   }
-  form.append(card);
 
   // history
   const hist = $("#cfg-history");
@@ -1613,38 +1615,238 @@ function renderConfigForm() {
 
 /* ============================= logs ============================= */
 
+const LOG_PAGE = 300;
+const ICON_FILTER =
+  "M10 18h4v-2h-4v2zM3 6v2h18V6H3zm4 7h10v-2H7v2z";
+const ICON_REFRESH =
+  "M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z";
+const ICON_DOWNLOAD = "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z";
+
+let logLoaded: any[] = []; // ring entries, oldest -> newest (all loaded pages)
+let logTotal = 0;
+let logOldestSeq = 0; // seq of the oldest loaded entry (0 = nothing loaded)
+let logNoMore = false;
+let logApps: string[] = [];
+let logNames: string[] = [];
+let logLoggers: string[] = [];
+let logBusy = false;
+let logRegexTimer = 0;
+const logFilters = { level: "", logger: "", app: "", name: "", regex: "" };
+
+function svgIcon(path: string, size = 16): SVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("fill", "currentColor");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", path);
+  svg.append(p);
+  return svg;
+}
+
+function logRow(e: any): HTMLElement {
+  const div = el("div", {}, [e.raw]);
+  if (e.level === "WARN") div.className = "lwarn";
+  else if (e.level === "ERROR") div.className = "lerror";
+  return div;
+}
+
+function logMatches(e: any, re: RegExp | null): boolean {
+  if (logFilters.level && e.level !== logFilters.level) return false;
+  if (logFilters.logger && e.logger !== logFilters.logger) return false;
+  if (logFilters.app && e.app !== logFilters.app) return false;
+  if (logFilters.name && e.name !== logFilters.name) return false;
+  if (re && !re.test(e.raw)) return false;
+  return true;
+}
+
+function renderLogList(scrollBottom = false) {
+  const box = $("#logs-box") as HTMLElement;
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 4;
+  const st = box.scrollTop;
+  box.innerHTML = "";
+  let re: RegExp | null = null;
+  if (logFilters.regex) {
+    try { re = new RegExp(logFilters.regex); } catch { re = null; }
+  }
+  const frag = document.createDocumentFragment();
+  for (const e of logLoaded) {
+    if (logMatches(e, re)) frag.append(logRow(e));
+  }
+  box.append(frag);
+  if (scrollBottom || atBottom) box.scrollTop = box.scrollHeight;
+  else box.scrollTop = st;
+}
+
+function renderLogBadges() {
+  const cont = $("#logs-fbadges");
+  cont.innerHTML = "";
+  const defs: [string, string, string][] = [
+    ["level", logFilters.level, logFilters.level],
+    ["logger", logFilters.logger, "logger: " + logFilters.logger],
+    ["app", logFilters.app, "app: " + logFilters.app],
+    ["name", logFilters.name, "name: " + logFilters.name],
+    ["regex", logFilters.regex, "regex: /" + logFilters.regex + "/"],
+  ];
+  for (const [key, val, label] of defs) {
+    if (!val) continue;
+    const b = el("span", { class: "f-badge" }, [label]);
+    const x = el("button", { class: "f-x", title: "remove filter" }, ["✕"]);
+    x.onclick = () => {
+      (logFilters as any)[key] = "";
+      syncLogFilterUI();
+      renderLogBadges();
+      renderLogList();
+    };
+    b.append(x);
+    cont.append(b);
+  }
+}
+
+function syncLogFilterUI() {
+  ($("#fl-level") as HTMLSelectElement).value = logFilters.level;
+  ($("#fl-logger") as HTMLSelectElement).value = logFilters.logger;
+  ($("#fl-app") as HTMLSelectElement).value = logFilters.app;
+  ($("#fl-name") as HTMLSelectElement).value = logFilters.name;
+  ($("#fl-regex") as HTMLInputElement).value = logFilters.regex;
+}
+
+function populateLogFacets() {
+  for (const [sel, vals, cur] of [
+    ["#fl-logger", logLoggers, logFilters.logger],
+    ["#fl-app", logApps, logFilters.app],
+    ["#fl-name", logNames, logFilters.name],
+  ] as [string, string[], string][]) {
+    const s = $(sel) as HTMLSelectElement;
+    s.innerHTML = "";
+    s.append(el("option", { value: "" }, ["all"]));
+    for (const v of vals) s.append(el("option", { value: v }, [v]));
+    if (cur && !vals.includes(cur)) s.append(el("option", { value: cur }, [cur]));
+    s.value = cur;
+  }
+}
+
+async function logsFetch(before?: number): Promise<any> {
+  const q = new URLSearchParams({ limit: String(LOG_PAGE) });
+  if (before !== undefined) q.set("before", String(before));
+  return api("/logs?" + q.toString());
+}
+
 async function renderLogs() {
   const v = $("#view");
   v.innerHTML = "";
+  logLoaded = []; logTotal = 0; logOldestSeq = 0; logNoMore = false;
+  logApps = []; logNames = []; logLoggers = [];
   v.append(el("div", { class: "card" }, [
-    el("h3", {}, ["Server logs"]),
-    el("div", { class: "logs-box", id: "logs-box" }),
-    el("div", { class: "row", style: "margin-top:10px" }, [
-      el("button", { id: "logs-refresh", class: "btn btn-outline btn-small" }, ["Refresh"]),
-      el("button", { id: "logs-export", class: "btn btn-outline btn-small" }, ["Download .txt"]),
+    el("div", { class: "logs-head" }, [
+      el("h3", {}, ["Server logs"]),
+      el("div", { class: "row", style: "gap:8px" }, [
+        el("button", { id: "logs-refresh", class: "btn btn-outline btn-small" }, [svgIcon(ICON_REFRESH, 14), " Refresh"]),
+        el("button", { id: "logs-export", class: "btn btn-outline btn-small" }, [svgIcon(ICON_DOWNLOAD, 14), " Download .txt"]),
+      ]),
     ]),
+    el("div", { class: "logs-filterbar" }, [
+      el("button", { id: "logs-fbtn", class: "mini-btn", title: "Filter logs" }, [svgIcon(ICON_FILTER, 15)]),
+      el("span", { id: "logs-fbadges", class: "logs-fbadges" }),
+      el("div", { class: "logs-pop", id: "logs-pop" }, [
+        el("div", { class: "lp-row" }, [
+          el("label", {}, ["Level"]),
+          el("select", { id: "fl-level" }, [
+            el("option", { value: "" }, ["all"]),
+            el("option", { value: "DEBUG" }, ["DEBUG"]),
+            el("option", { value: "INFO" }, ["INFO"]),
+            el("option", { value: "WARN" }, ["WARN"]),
+            el("option", { value: "ERROR" }, ["ERROR"]),
+          ]),
+        ]),
+        el("div", { class: "lp-row" }, [el("label", {}, ["Logger"]), el("select", { id: "fl-logger" })]),
+        el("div", { class: "lp-row" }, [el("label", {}, ["App"]), el("select", { id: "fl-app" })]),
+        el("div", { class: "lp-row" }, [el("label", {}, ["Name"]), el("select", { id: "fl-name" })]),
+        el("div", { class: "lp-row" }, [
+          el("label", {}, ["Regex"]),
+          el("input", { id: "fl-regex", type: "text", placeholder: "e.g. mongo|throttled", spellcheck: "false" }),
+        ]),
+        el("div", { class: "row", style: "justify-content:flex-end;margin-top:6px" }, [
+          el("button", { id: "fl-clear", class: "btn btn-outline btn-small" }, ["Clear all"]),
+        ]),
+      ]),
+    ]),
+    el("div", { class: "logs-box", id: "logs-box" }),
   ]));
+
+  const box = $("#logs-box") as HTMLElement;
   const load = async () => {
     try {
-      const d = await api("/logs");
-      const box = $("#logs-box");
-      box.innerHTML = "";
-      for (const line of d.lines) {
-        const div = el("div", {}, [line]);
-        if (line.includes(" WARN")) div.className = "lwarn";
-        if (line.includes("ERROR")) div.className = "lerror";
-        box.append(div);
-      }
-      box.scrollTop = box.scrollHeight;
+      const d = await logsFetch();
+      logLoaded = d.lines; logTotal = d.total;
+      logOldestSeq = d.lines.length ? d.lines[0].seq : 0;
+      logNoMore = false;
+      logApps = d.apps; logNames = d.names; logLoggers = d.loggers;
+      populateLogFacets();
+      renderLogList(true);
     } catch (e: any) { snack(e.message); }
   };
+  const fetchOlder = async () => {
+    if (logBusy || logNoMore || logOldestSeq <= 0) return;
+    logBusy = true;
+    const before = logOldestSeq;
+    const h0 = box.scrollHeight;
+    try {
+      const d = await logsFetch(before);
+      logTotal = d.total;
+      if (d.lines.length === 0) { logNoMore = true; return; }
+      logApps = d.apps; logNames = d.names; logLoggers = d.loggers;
+      populateLogFacets();
+      const seen = new Set(logLoaded.map((e: any) => e.seq));
+      const fresh = d.lines.filter((e: any) => !seen.has(e.seq));
+      logLoaded = fresh.concat(logLoaded);
+      logOldestSeq = logLoaded[0].seq;
+      let re: RegExp | null = null;
+      if (logFilters.regex) { try { re = new RegExp(logFilters.regex); } catch { re = null; } }
+      const frag = document.createDocumentFragment();
+      for (const e of fresh) {
+        if (logMatches(e, re)) frag.append(logRow(e));
+      }
+      box.insertBefore(frag, box.firstChild);
+      box.scrollTop += box.scrollHeight - h0;
+    } catch (e: any) { snack(e.message); }
+    finally { logBusy = false; }
+  };
+  box.addEventListener("scroll", () => {
+    if (box.scrollTop < 40) fetchOlder();
+  });
   $("#logs-refresh").onclick = load;
   $("#logs-export").onclick = async () => {
-    const d = await api("/logs");
-    const blob = new Blob([d.lines.join("\n")], { type: "text/plain" });
-    const a = el("a", { href: URL.createObjectURL(blob), download: "xavierdb.log" });
-    a.click();
+    try {
+      const d = await api("/logs"); // no params -> the full ring
+      const blob = new Blob([d.lines.map((l: any) => l.raw).join("\n")], { type: "text/plain" });
+      const a = el("a", { href: URL.createObjectURL(blob), download: "xavierdb.log" });
+      a.click();
+    } catch (e: any) { snack(e.message); }
   };
+  $("#logs-fbtn").onclick = () => $("#logs-pop").classList.toggle("open");
+  $("#fl-clear").onclick = () => {
+    logFilters.level = ""; logFilters.logger = ""; logFilters.app = ""; logFilters.name = ""; logFilters.regex = "";
+    syncLogFilterUI(); renderLogBadges(); renderLogList();
+  };
+  const bindSelect = (sel: string, key: string) => {
+    $(sel).addEventListener("change", (ev) => {
+      (logFilters as any)[key] = (ev.target as HTMLSelectElement).value;
+      renderLogBadges();
+      renderLogList();
+    });
+  };
+  bindSelect("#fl-level", "level");
+  bindSelect("#fl-logger", "logger");
+  bindSelect("#fl-app", "app");
+  bindSelect("#fl-name", "name");
+  $("#fl-regex").addEventListener("input", () => {
+    logFilters.regex = ($("#fl-regex") as HTMLInputElement).value;
+    renderLogBadges();
+    clearTimeout(logRegexTimer);
+    logRegexTimer = window.setTimeout(() => renderLogList(), 250);
+  });
   load();
 }
 

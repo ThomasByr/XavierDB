@@ -99,6 +99,8 @@ pub async fn authorize(
             format!("no {action} permission on {db}.{coll}"),
         ));
     }
+    // per-request trace line (only emitted when dashboard.log_level = debug)
+    tracing::debug!("{action} /q/{db}/{coll} as {}@{}", claims.sub, claims.app);
     Ok(claims)
 }
 
@@ -210,6 +212,7 @@ pub async fn list_visible(
 ) -> Result<Json<Value>, ApiError> {
     let started = Instant::now();
     let claims = authenticate(&state, &headers)?;
+    tracing::debug!("GET /ls as {}@{}", claims.sub, claims.app);
 
     // ?db=X — the collections of one database
     if let Some(db) = &params.db {

@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicI64, AtomicU64};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Instant;
 
 use dashmap::DashMap;
@@ -44,9 +44,6 @@ pub struct AppState {
     pub sessions: DashMap<String, AdminSession>,
     /// /auth throttle per IP: ip -> (window_start_ms, count).
     pub auth_throttle: DashMap<String, (i64, u32)>,
-
-    /// In-memory log ring buffer (last ~1500 lines).
-    pub logs: Mutex<VecDeque<String>>,
 
     /// MongoDB client (lazy connect).
     pub mongo: Client,
@@ -100,7 +97,6 @@ impl AppState {
             cursor_seq: AtomicU64::new(0),
             sessions: DashMap::new(),
             auth_throttle: DashMap::new(),
-            logs: Mutex::new(VecDeque::new()),
             mongo,
             started: Instant::now(),
             last_config_written: Mutex::new(None),
@@ -231,11 +227,217 @@ pub struct AdminSession {
 // Log ring
 // ---------------------------------------------------------------------------
 
-pub fn log_push(state: &AppState, line: String) {
-    if let Ok(mut logs) = state.logs.lock() {
-        if logs.len() >= 1500 {
-            logs.pop_front();
+/// One ring entry: the raw formatted line plus parsed fields the dashboard
+/// uses for client-side filtering (severity, logger, app_id, name_id).
+#[derive(Clone)]
+pub struct LogEntry {
+    /// Monotonic id — stable even when old entries are evicted from the ring.
+    pub seq: u64,
+    /// Fully formatted line: `2026-08-14T13:59:50.912518Z  INFO XavierDB: msg`.
+    pub raw: String,
+    /// INFO / WARN / ERROR / DEBUG / TRACE.
+    pub level: String,
+    /// tracing target (module path) or "XavierDB" for log_line lines.
+    pub logger: String,
+    pub app: Option<String>,
+    pub name: Option<String>,
+}
+
+pub const LOG_CAP: usize = 3000;
+
+struct LogRing {
+    entries: VecDeque<LogEntry>,
+    next_seq: u64,
+    cap: usize,
+}
+
+impl LogRing {
+    fn new(cap: usize) -> Self {
+        Self { entries: VecDeque::with_capacity(cap), next_seq: 0, cap }
+    }
+    fn push(
+        &mut self,
+        level: String,
+        logger: String,
+        app: Option<String>,
+        name: Option<String>,
+        raw: String,
+    ) {
+        if self.entries.len() >= self.cap {
+            self.entries.pop_front();
         }
-        logs.push_back(line);
+        self.entries.push_back(LogEntry { seq: self.next_seq, raw, level, logger, app, name });
+        self.next_seq += 1;
+    }
+}
+
+/// Global ring (not on AppState) so lines emitted before the state exists
+/// (env bootstrap, config/perms load, JWT notice, panic hook) are captured too.
+static LOG_RING: OnceLock<Mutex<LogRing>> = OnceLock::new();
+
+fn ring() -> &'static Mutex<LogRing> {
+    LOG_RING.get_or_init(|| Mutex::new(LogRing::new(LOG_CAP)))
+}
+
+/// RFC3339 UTC with microsecond precision, matching tracing's default timer
+/// (e.g. `2026-08-14T13:59:50.912518Z`). No chrono dependency: civil-date
+/// conversion via Howard Hinnant's days-from-civil algorithm.
+fn fmt_ts() -> String {
+    let d = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = d.as_secs();
+    let micros = d.subsec_micros();
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let dd = doy - (153 * mp + 2) / 5 + 1;
+    let mm = if mp < 10 { mp + 3 } else { mp - 9 };
+    let yy = if mm <= 2 { y + 1 } else { y };
+    format!("{yy:04}-{mm:02}-{dd:02}T{h:02}:{mi:02}:{s:02}.{micros:06}Z")
+}
+
+fn push_fmt(level: &str, app: Option<String>, name: Option<String>, msg: &str) {
+    let raw = format!("{} {:>5} XavierDB: {msg}", fmt_ts(), level);
+    if let Ok(mut r) = ring().lock() {
+        r.push(level.to_string(), "XavierDB".to_string(), app, name, raw);
+    }
+}
+
+/// Log a line to the ring AND stderr (console keeps the current behavior).
+pub fn log_line(level: &str, msg: &str) {
+    push_fmt(level, None, None, msg);
+    eprintln!("{msg}");
+}
+
+/// Log a line to the ring AND stdout (used for one-shot bootstrap prints).
+pub fn log_stdout(level: &str, msg: &str) {
+    push_fmt(level, None, None, msg);
+    println!("{msg}");
+}
+
+/// Push a fully formatted tracing line (LogWriter). Parses the level, the
+/// logger (tracing target) and the auth identity (app/name) out of it.
+pub fn log_push_raw(line: String) {
+    let (level, logger, msg) = parse_level_msg(&line);
+    let (name, app) = log_identify(&msg);
+    if let Ok(mut r) = ring().lock() {
+        r.push(level, logger, app, name, line);
+    }
+}
+
+/// "2026-08-14T13:59:50.912518Z  INFO XavierDB::routes_misc: msg" -> ("INFO", "XavierDB::routes_misc", "msg")
+fn parse_level_msg(line: &str) -> (String, String, String) {
+    let rest = line.split_once(' ').map(|(_, r)| r.trim_start()).unwrap_or(line);
+    let (lvl, rest) = rest.split_once(' ').unwrap_or((rest, ""));
+    let (logger, msg) = rest
+        .split_once(": ")
+        .map(|(l, m)| (l.to_string(), m.to_string()))
+        .unwrap_or_else(|| ("XavierDB".to_string(), rest.to_string()));
+    (lvl.to_string(), logger, msg)
+}
+
+/// Extract (name, app) from identity-carrying log messages:
+/// auth lines ("login OK: name@app") and per-request debug lines
+/// ("GET /q/db/coll as name@app"); any other shape yields (None, None).
+/// Admin logins are excluded.
+fn log_identify(msg: &str) -> (Option<String>, Option<String>) {
+    let rest = ["login OK: ", "login failed: ", "login blocked: "]
+        .iter()
+        .find_map(|p| msg.strip_prefix(p))
+        .unwrap_or("")
+        .trim();
+    let id = if let Some((n, a)) = rest.rsplit_once('@') {
+        if !n.is_empty() && !a.is_empty() && !a.contains(' ') {
+            Some((n, a))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let id = id.or_else(|| {
+        // "... as name@app"
+        let rest = msg.rsplit_once(" as ").map(|(_, r)| r.trim()).unwrap_or("");
+        rest.rsplit_once('@').and_then(|(n, a)| {
+            if !n.is_empty() && !a.is_empty() && !a.contains(' ') {
+                Some((n, a))
+            } else {
+                None
+            }
+        })
+    });
+    match id {
+        Some((n, a)) => (Some(n.to_string()), Some(a.to_string())),
+        None => (None, None),
+    }
+}
+
+/// Snapshot of the ring: entries in chronological order (oldest first).
+/// `limit` = max entries (0 = all); `before` = only entries with seq < before.
+/// Also returns the total count and the distinct app/name/logger facets for
+/// the dashboard filter dropdowns.
+pub fn log_snapshot(
+    limit: usize,
+    before: Option<u64>,
+) -> (Vec<LogEntry>, u64, Vec<String>, Vec<String>, Vec<String>) {
+    let r = ring().lock().unwrap();
+    let total = r.entries.len() as u64;
+    let mut apps: Vec<String> = r
+        .entries
+        .iter()
+        .filter_map(|e| e.app.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut names: Vec<String> = r
+        .entries
+        .iter()
+        .filter_map(|e| e.name.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut loggers: Vec<String> = r
+        .entries
+        .iter()
+        .map(|e| e.logger.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    apps.sort();
+    names.sort();
+    loggers.sort();
+    let iter = r.entries.iter().filter(|e| before.is_none_or(|b| e.seq < b));
+    let v: Vec<LogEntry> = if limit == 0 {
+        iter.cloned().collect()
+    } else {
+        iter.rev().take(limit).collect::<Vec<_>>().into_iter().rev().cloned().collect()
+    };
+    (v, total, apps, names, loggers)
+}
+
+// ---------------------------------------------------------------------------
+// Log level knob (dashboard config dashboard.log_level, hot-reloadable)
+// ---------------------------------------------------------------------------
+
+/// Hook installed by main() once the tracing subscriber exists; lets config
+/// reloads (dashboard save / reload-from-disk / file watcher) change the
+/// verbosity (INFO vs DEBUG) without a restart.
+static LOG_LEVEL_HOOK: OnceLock<Box<dyn Fn(&str) + Send + Sync>> = OnceLock::new();
+
+pub fn set_log_level_hook(hook: Box<dyn Fn(&str) + Send + Sync>) {
+    let _ = LOG_LEVEL_HOOK.set(hook);
+}
+
+pub fn apply_log_level(level: &str) {
+    if let Some(h) = LOG_LEVEL_HOOK.get() {
+        h(level);
     }
 }

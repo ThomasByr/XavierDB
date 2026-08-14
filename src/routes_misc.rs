@@ -11,6 +11,12 @@ use serde_json::json;
 use crate::auth::{auth_throttled, parse_identifier, sign_jwt, verify_credential};
 use crate::error::{ApiError, JsonBody};
 use crate::state::AppState;
+use tracing::{info, warn};
+
+/// Truncate a client-supplied identity before logging (it is attacker input).
+fn log_ident(s: &str) -> String {
+    s.chars().take(100).collect()
+}
 
 // ---------------------------------------------------------------------------
 // POST /auth  { "identifier": "name@app", "token": "..." }
@@ -31,13 +37,25 @@ pub async fn auth_login(
     // client-controlled, so trusting it would let a caller rotate the header
     // to bypass the brute-force limit (no proxy exists in this deployment).
     let ip = addr.0.ip().to_string();
-    auth_throttled(&state, &ip)?;
+    if let Err(e) = auth_throttled(&state, &ip) {
+        warn!("login throttled: {ip}");
+        return Err(e);
+    }
 
-    let (name, app) = parse_identifier(&body.identifier).ok_or_else(ApiError::unauthorized)?;
+    let (name, app) = match parse_identifier(&body.identifier) {
+        Some(p) => p,
+        None => {
+            warn!("login failed: {}", log_ident(&body.identifier));
+            return Err(ApiError::unauthorized());
+        }
+    };
 
     // blocked? (cheap check before the expensive hash; also makes the 403
     // independent of token correctness)
-    crate::routes_q::check_block(&state, &name, &app)?;
+    if let Err(e) = crate::routes_q::check_block(&state, &name, &app) {
+        warn!("login blocked: {}", log_ident(&body.identifier));
+        return Err(e);
+    }
 
     // clone the app hash and drop the perms read-lock before hashing: the
     // Argon2id verify takes seconds and must not stall permission writers
@@ -54,8 +72,10 @@ pub async fn auth_login(
         .await
         .unwrap_or(false);
     if !ok {
+        warn!("login failed: {}", log_ident(&body.identifier));
         return Err(ApiError::unauthorized());
     }
+    info!("login OK: {}", log_ident(&body.identifier));
 
     // first sight of this name_id -> make it editable in the file
     {

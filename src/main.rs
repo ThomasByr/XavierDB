@@ -60,13 +60,13 @@ fn load_env() {
     if !std::path::Path::new(".env").exists() {
         let template = include_str!("../.env.example");
         if let Err(e) = std::fs::write(".env", template) {
-            eprintln!("[env] could not create .env: {e}");
+            crate::state::log_line("ERROR", &format!("[env] could not create .env: {e}"));
         } else {
-            println!("[env] created .env from .env.example");
+            crate::state::log_stdout("INFO", "[env] created .env from .env.example");
         }
     }
     if let Err(e) = dotenvy::from_path(".env") {
-        eprintln!("[env] dotenv error: {e}");
+        crate::state::log_line("WARN", &format!("[env] dotenv error: {e}"));
     }
 }
 
@@ -91,7 +91,7 @@ fn bootstrap_admin_password() {
     let phc = match auth::hash_credential(&password) {
         Ok(h) => h,
         Err(e) => {
-            eprintln!("[admin] could not hash password: {e}");
+            crate::state::log_line("ERROR", &format!("[admin] could not hash password: {e}"));
             return;
         }
     };
@@ -125,17 +125,18 @@ fn bootstrap_admin_password() {
     // SAFETY: called from main() before the tokio runtime is built, so no
     // other thread exists yet.
     unsafe { std::env::set_var("PASSWORD_HASH", &phc) };
-    println!("================================================================");
-    println!("[admin] generated a new dashboard password (shown ONCE):");
-    println!();
-    println!("    {password}");
-    println!();
-    println!(
-        "username : {}",
-        std::env::var("USERNAME").unwrap_or_else(|_| "admin".into())
+    crate::state::log_stdout("INFO", "================================================================");
+    crate::state::log_stdout("INFO", "[admin] generated a new dashboard password (shown ONCE):");
+    crate::state::log_stdout("INFO", &format!("    {password}"));
+    crate::state::log_stdout(
+        "INFO",
+        &format!(
+            "username : {}",
+            std::env::var("USERNAME").unwrap_or_else(|_| "admin".into())
+        ),
     );
-    println!("(stored in .env as PASSWORD_HASH — you can change it there)");
-    println!("================================================================");
+    crate::state::log_stdout("INFO", "(stored in .env as PASSWORD_HASH — you can change it there)");
+    crate::state::log_stdout("INFO", "================================================================");
 }
 
 /// Spawn a background loop task that restarts itself whenever it exits
@@ -149,7 +150,7 @@ where
         loop {
             let task = tokio::spawn(factory());
             if task.await.is_err() {
-                eprintln!("[{name}] background loop panicked — restarting");
+                crate::state::log_line("ERROR", &format!("[{name}] background loop panicked — restarting"));
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
@@ -171,14 +172,14 @@ where
         let mut watcher = match RecommendedWatcher::new(tx, Config::default()) {
             Ok(w) => w,
             Err(e) => {
-                eprintln!("[watch] cannot watch {}: {e}", path.display());
+                crate::state::log_line("ERROR", &format!("[watch] cannot watch {}: {e}", path.display()));
                 return;
             }
         };
         if watcher.watch(&path, RecursiveMode::NonRecursive).is_err() {
-            eprintln!(
-                "[watch] cannot watch {} (file may not exist yet)",
-                path.display()
+            crate::state::log_line(
+                "WARN",
+                &format!("[watch] cannot watch {} (file may not exist yet)", path.display()),
             );
             return;
         }
@@ -199,7 +200,7 @@ where
                         last = std::time::Instant::now();
                     }
                 }
-                Ok(Err(e)) => eprintln!("[watch] event error: {e}"),
+                Ok(Err(e)) => crate::state::log_line("WARN", &format!("[watch] event error: {e}")),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     if pending && last.elapsed() >= std::time::Duration::from_millis(debounce_ms) {
                         pending = false;
@@ -263,6 +264,7 @@ fn start_watchers(state: Arc<AppState>, tls_state: Option<Arc<tls::TlsState>>) {
             error!("config reload failed: {e}");
             return;
         }
+        crate::state::apply_log_level(&cfg.dashboard.log_level);
         *st2.config.write().unwrap() = cfg;
         st2.cfg_version.fetch_add(1, Ordering::Relaxed);
         if let Some(b) = bytes {
@@ -372,6 +374,23 @@ fn build_router(state: Arc<AppState>) -> Router {
 // ---------------------------------------------------------------------------
 
 fn main() {
+    // panics go to the dashboard log ring too (the console keeps its default
+    // behavior via log_line's stderr echo)
+    std::panic::set_hook(Box::new(|info| {
+        let thread = std::thread::current().name().unwrap_or("<unnamed>").to_string();
+        let loc = info
+            .location()
+            .map(|l| format!(" at {}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_default();
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.clone()))
+            .unwrap_or_else(|| "Box<dyn Any>".to_string());
+        crate::state::log_line("ERROR", &format!("thread '{thread}' panicked{loc}:\n{payload}"));
+    }));
+
     // one shared crypto provider for rustls + jsonwebtoken (ring is already
     // in the tree via jsonwebtoken's rust_crypto feature)
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -412,21 +431,21 @@ async fn run(max_workers: usize) {
     let config_path = PathBuf::from("config");
     let (config, cfg_warn) = config::load_from_disk(&config_path);
     if let Some(w) = cfg_warn {
-        eprintln!("[config] {w}");
+        crate::state::log_line("WARN", &format!("[config] {w}"));
     }
     let perms_path = PathBuf::from(&config.global.permission_file);
     let perms = match std::fs::read_to_string(&perms_path) {
         Ok(text) => match PermissionsFile::parse(&text) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("[perms] {e} — starting with no permissions");
+                crate::state::log_line("ERROR", &format!("[perms] {e} — starting with no permissions"));
                 PermissionsFile::default()
             }
         },
         Err(_) => PermissionsFile::default(),
     };
     if perms.validate().is_err() {
-        eprintln!("[perms] warning: authorized_keys.yml has validation problems");
+        crate::state::log_line("WARN", "[perms] warning: authorized_keys.yml has validation problems");
     }
 
     // --- JWT secret ---
@@ -441,8 +460,9 @@ async fn run(max_workers: usize) {
             use rand::RngCore;
             let mut b = [0u8; 32];
             rand::rngs::OsRng.fill_bytes(&mut b);
-            eprintln!(
-                "[auth] JWT_SECRET not set: generated a random secret for this run; all existing tokens will be invalid after restart"
+            crate::state::log_line(
+                "WARN",
+                "[auth] JWT_SECRET not set: generated a random secret for this run; all existing tokens will be invalid after restart",
             );
             b
         }
@@ -452,7 +472,7 @@ async fn run(max_workers: usize) {
     let mongo = match mongodb::Client::with_uri_str(&mongodb_uri).await {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[mongo] bad URI: {e}");
+            crate::state::log_line("ERROR", &format!("[mongo] bad URI: {e}"));
             std::process::exit(1);
         }
     };
@@ -462,12 +482,30 @@ async fn run(max_workers: usize) {
         (Some(cert), Some(key)) => match tls::TlsState::new(cert, key) {
             Ok(ts) => (Some(Arc::new(ts)), true),
             Err(e) => {
-                eprintln!("[tls] TLS configured but unusable ({e}) — falling back to plain HTTP");
+                crate::state::log_line("WARN", &format!("[tls] TLS configured but unusable ({e}) — falling back to plain HTTP"));
                 (None, false)
             }
         },
         _ => (None, false),
     };
+
+    // --- logging (stdout + in-memory ring for the dashboard) ---
+    // Verbosity comes from config dashboard.log_level ("info"|"debug") and is
+    // hot-reloadable via the reload handle (dashboard save / watcher).
+    let log_level = if config.dashboard.log_level == "debug" {
+        tracing_subscriber::filter::LevelFilter::DEBUG
+    } else {
+        tracing_subscriber::filter::LevelFilter::INFO
+    };
+    let (log_filter, log_reload) = tracing_subscriber::reload::Layer::new(log_level);
+    crate::state::set_log_level_hook(Box::new(move |level: &str| {
+        let lf = if level == "debug" {
+            tracing_subscriber::filter::LevelFilter::DEBUG
+        } else {
+            tracing_subscriber::filter::LevelFilter::INFO
+        };
+        let _ = log_reload.modify(|f| *f = lf);
+    }));
 
     let state = AppState::new(
         config,
@@ -481,13 +519,14 @@ async fn run(max_workers: usize) {
         max_insert_batch,
     );
 
-    // --- logging (stdout + in-memory ring for the dashboard) ---
-    let log_state = state.clone();
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_writer(move || LogWriter {
-            state: log_state.clone(),
-        })
+    use tracing_subscriber::layer::{Layer, SubscriberExt};
+    use tracing_subscriber::util::SubscriberInitExt;
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(|| LogWriter)
+                .with_filter(log_filter),
+        )
         .try_init()
         .ok();
 
@@ -503,7 +542,7 @@ async fn run(max_workers: usize) {
     // --- serve ---
     let addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&addr).await.unwrap_or_else(|e| {
-        eprintln!("cannot bind {addr}: {e}");
+        crate::state::log_line("ERROR", &format!("cannot bind {addr}: {e}"));
         std::process::exit(1);
     });
     info!(
@@ -549,9 +588,7 @@ async fn run(max_workers: usize) {
 }
 
 /// tracing writer that also feeds the in-memory ring (dashboard logs page).
-struct LogWriter {
-    state: Arc<AppState>,
-}
+struct LogWriter;
 
 impl std::io::Write for LogWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -559,7 +596,7 @@ impl std::io::Write for LogWriter {
         if !line.is_empty() {
             // strip ANSI color escapes (tracing adds them; the dashboard can't render them)
             let clean = strip_ansi(&line);
-            state::log_push(&self.state, clean);
+            state::log_push_raw(clean);
         }
         std::io::stdout().write_all(buf)?;
         Ok(buf.len())
