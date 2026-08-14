@@ -7,13 +7,13 @@ and a live admin dashboard.
 > [!NOTE]
 > Built in Rust (axum + tokio + mongodb driver). No Python, no Node at runtime.
 
-| Method                    | Path           | Purpose                                                      |
-| ------------------------- | -------------- | ------------------------------------------------------------ |
-| POST                      | /auth          | client login  -> JWT (+ HttpOnly cookie)                     |
-| GET/POST/PUT/PATCH/DELETE | /q/<db>/<coll> | MongoDB proxy                                                |
-| GET                       | /ls            | list databases the caller may read (?db=<db> -> collections) |
-| GET                       | /dashboard/    | admin dashboard (login protected)                            |
-| GET                       | /health        | cached health document (public)                              |
+| Method                    | Path             | Purpose                                                      |
+| ------------------------- | ---------------- | ------------------------------------------------------------ |
+| POST                      | `/auth`          | client login  -> JWT (+ HttpOnly cookie)                     |
+| GET/POST/PUT/PATCH/DELETE | `/q/<db>/<coll>` | MongoDB proxy                                                |
+| GET                       | `/ls`            | list databases the caller may read (?db=<db> -> collections) |
+| GET                       | `/dashboard/`    | admin dashboard (login protected)                            |
+| GET                       | `/health`        | cached health document (public)                              |
 
 1. [Why this shape?](#why-this-shape)
 2. [Quick start (Docker)](#quick-start-docker)
