@@ -4,15 +4,23 @@ A small, fast HTTP server that exposes a **MongoDB database through a REST API**
 with per-client authentication, granular permissions, adaptive load control
 and a live admin dashboard.
 
-Built in Rust (axum + tokio + mongodb driver). No Python, no Node at runtime.
+> [!NOTE]
+> Built in Rust (axum + tokio + mongodb driver). No Python, no Node at runtime.
 
-```txt
-POST /auth                                 client login  -> JWT (+ HttpOnly cookie)
-GET|POST|PUT|PATCH|DELETE  /q/<db>/<coll>  MongoDB proxy
-GET  /ls                                   list databases the caller may read (?db=<db> -> collections)
-/dashboard/                                admin dashboard (login protected)
-/health                                    cached health document (public)
-```
+| Method                    | Path           | Purpose                                                      |
+| ------------------------- | -------------- | ------------------------------------------------------------ |
+| POST                      | /auth          | client login  -> JWT (+ HttpOnly cookie)                     |
+| GET/POST/PUT/PATCH/DELETE | /q/<db>/<coll> | MongoDB proxy                                                |
+| GET                       | /ls            | list databases the caller may read (?db=<db> -> collections) |
+| GET                       | /dashboard/    | admin dashboard (login protected)                            |
+| GET                       | /health        | cached health document (public)                              |
+
+1. [Why this shape?](#why-this-shape)
+2. [Quick start (Docker)](#quick-start-docker)
+3. [Files](#files)
+4. [Examples](#examples)
+5. [Development](#development)
+6. [Tests](#tests)
 
 ## Why this shape?
 
