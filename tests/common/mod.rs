@@ -479,6 +479,16 @@ pub fn health(agent: &ureq::Agent) -> (u16, Value) {
     get(agent, &format!("{}/health", base()), None)
 }
 
+/// The server's effective insert-batch cap, as published top-level in the
+/// public /health document (MAX_INSERT_BATCH env, static per process).
+pub fn max_insert_batch(agent: &ureq::Agent) -> usize {
+    let (s, b) = health(agent);
+    assert_eq!(s, 200, "{b}");
+    b["max_insert_batch"]
+        .as_u64()
+        .expect("max_insert_batch in /health") as usize
+}
+
 // -- dashboard -------------------------------------------------------------
 
 pub fn dash_get(agent: &ureq::Agent, cookie: &str, path: &str) -> (u16, Value) {

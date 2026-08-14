@@ -171,6 +171,7 @@ fn health_shape() {
     assert_eq!(b["app"]["status"], "ok");
     assert!(b["checked_at_ms"].is_number());
     assert!(b["next_refresh_seconds"].is_number());
+    assert!(b["max_insert_batch"].as_u64().unwrap_or(0) >= 1, "{b}");
     assert_eq!(b.as_object().unwrap().len() >= 3, true);
 }
 

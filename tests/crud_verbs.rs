@@ -119,6 +119,201 @@ fn duplicate_id_conflict() {
 }
 
 #[test]
+fn insert_many_two_docs_order_and_readback() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_im_two";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+
+    let (status, body) = post_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [
+            {"_id": "im1", "v": 1},
+            {"_id": "im2", "v": 2},
+        ]}),
+    );
+    assert_eq!(status, 201, "{body}");
+    assert_eq!(body["inserted_count"], 2);
+    // union shape: the array path has inserted_ids, no inserted_id
+    assert_eq!(body["inserted_id"], Value::Null);
+    assert_eq!(body["inserted_ids"], json!(["im1", "im2"]));
+
+    let mut docs = get_docs(&agent, &jwt, DB_CRUD, coll);
+    docs.sort_by(|a, b| a["_id"].as_str().cmp(&b["_id"].as_str()));
+    assert_eq!(docs.len(), 2);
+    assert_eq!(docs[0]["_id"], "im1");
+    assert_eq!(docs[0]["v"], 1);
+    assert_eq!(docs[1]["_id"], "im2");
+    assert_eq!(docs[1]["v"], 2);
+}
+
+#[test]
+fn insert_many_single_element_and_mixed_ids() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_im_one";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+
+    // 1-element array goes through the same insert_many path
+    let (status, body) = post_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [{"_id": "solo", "v": 1}]}),
+    );
+    assert_eq!(status, 201, "{body}");
+    assert_eq!(body["inserted_count"], 1);
+    assert_eq!(body["inserted_ids"], json!(["solo"]));
+
+    // mixed explicit + driver-generated ObjectIds keep input order
+    let (status, body) = post_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [
+            {"_id": "named", "v": 2},
+            {"v": 3},
+            {"_id": "named2", "v": 4},
+        ]}),
+    );
+    assert_eq!(status, 201, "{body}");
+    assert_eq!(body["inserted_count"], 3);
+    let ids = body["inserted_ids"].as_array().unwrap();
+    assert_eq!(ids.len(), 3);
+    assert_eq!(ids[0], "named");
+    let oid = ids[1].as_str().expect("generated ObjectId hex string");
+    assert_eq!(oid.len(), 24);
+    assert!(oid.chars().all(|c| c.is_ascii_hexdigit()), "bad hex: {oid}");
+    assert_eq!(ids[2], "named2");
+
+    let docs = get_docs(&agent, &jwt, DB_CRUD, coll);
+    assert_eq!(docs.len(), 4);
+}
+
+#[test]
+fn insert_many_bad_batches() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_im_bad";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+
+    // empty array -> 400
+    let (status, body) = post_q(&agent, &jwt, DB_CRUD, coll, &json!({"data": []}));
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+
+    // non-object element -> 400, nothing inserted
+    let (status, body) = post_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [{"_id": "ok1", "v": 1}, 42]}),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+    assert!(get_docs(&agent, &jwt, DB_CRUD, coll).is_empty());
+
+    // duplicate _id INSIDE the batch -> clean 400 before Mongo, no partial write
+    let (status, body) = post_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [
+            {"_id": "dup", "v": 1},
+            {"_id": "other", "v": 2},
+            {"_id": "dup", "v": 3},
+        ]}),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+    assert!(get_docs(&agent, &jwt, DB_CRUD, coll).is_empty());
+
+    // batch over the cap -> 400 (cap read from /health — env-configurable)
+    let cap = max_insert_batch(&agent);
+    let mut batch = Vec::new();
+    for i in 0..cap + 1 {
+        batch.push(json!({"_id": format!("big{i}"), "i": i}));
+    }
+    let (status, body) = post_q(&agent, &jwt, DB_CRUD, coll, &json!({"data": batch}));
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(err_code(&body), "BAD_REQUEST");
+    assert!(get_docs(&agent, &jwt, DB_CRUD, coll).is_empty());
+}
+
+#[test]
+fn insert_many_batch_at_cap_ok() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_im_cap";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+
+    // exactly the cap is accepted (cap read from /health — env-configurable)
+    let cap = max_insert_batch(&agent);
+    let mut batch = Vec::new();
+    for i in 0..cap {
+        batch.push(json!({"_id": format!("cap{i}"), "i": i}));
+    }
+    let (status, body) = post_q(&agent, &jwt, DB_CRUD, coll, &json!({"data": batch}));
+    assert_eq!(status, 201, "{body}");
+    assert_eq!(body["inserted_count"].as_u64().unwrap(), cap as u64);
+    assert_eq!(body["inserted_ids"].as_array().unwrap().len(), cap);
+
+    // readback via the driver: count_docs() GET helper caps at the 200 adaptive limit
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let n = rt.block_on(async {
+        let client = mongodb::Client::with_uri_str(&mongo_uri()).await.unwrap();
+        client
+            .database(DB_CRUD)
+            .collection::<bson::Document>(coll)
+            .count_documents(bson::Document::new())
+            .await
+            .unwrap()
+    });
+    assert_eq!(n, cap as u64);
+}
+
+#[test]
+fn insert_many_dup_against_existing_conflict() {
+    let agent = agent();
+    let jwt = jwt("main");
+    let coll = "crud_im_conflict";
+    clear_coll(&agent, &jwt, DB_CRUD, coll);
+    seed(&agent, &jwt, DB_CRUD, coll, "exists", json!({"v": 0}));
+
+    // ordered semantics: Mongo aborts at the first dup key; docs BEFORE it
+    // remain inserted, the request fails with 409
+    let (status, body) = post_q(
+        &agent,
+        &jwt,
+        DB_CRUD,
+        coll,
+        &json!({"data": [
+            {"_id": "before", "v": 1},
+            {"_id": "exists", "v": 99},
+            {"_id": "after", "v": 3},
+        ]}),
+    );
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(err_code(&body), "CONFLICT");
+    assert_eq!(err_status(&body), 409);
+
+    let docs = get_docs(&agent, &jwt, DB_CRUD, coll);
+    let mut ids: Vec<&str> = docs.iter().map(|d| d["_id"].as_str().unwrap()).collect();
+    ids.sort();
+    assert_eq!(ids, vec!["before", "exists"], "docs before the dup remain");
+}
+
+#[test]
 fn post_with_filter_updates() {
     let agent = agent();
     let jwt = jwt("main");
@@ -346,7 +541,7 @@ fn invalid_write_bodies() {
     assert_eq!(status, 400, "{body}");
     assert_eq!(err_code(&body), "BAD_REQUEST");
 
-    // data not an object -> 400
+    // data not a JSON object (or an array with a non-object element) -> 400
     let (status, body) = post_q(&agent, &jwt, DB_CRUD, coll, &json!({"data": [1, 2]}));
     assert_eq!(status, 400, "{body}");
     assert_eq!(err_code(&body), "BAD_REQUEST");
