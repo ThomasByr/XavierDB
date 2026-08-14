@@ -96,7 +96,7 @@ XavierDB/
 │   ├── bootstrap.sh               #   one-time fixture bootstrap (idempotent; dashboard creds from env or credentials.md)
 │   └── auth_flow.rs, crud_verbs.rs, dashboard_api.rs, edge_data.rs, meta_endpoints.rs,
 │       multi_app.rs, pagination.rs, perms_matrix.rs, projection.rs, query_filters.rs,
-│       smoke.rs, watcher_reload.rs   # 97 tests, ~26 s full run
+│       smoke.rs, watcher_reload.rs   # 102 tests, ~30 s full run
 ├── .env.example                 # documented env template (copy to .env)
 ├── authorized_keys.yml.example  # documented permissions template
 ├── src/
@@ -143,7 +143,7 @@ directory (repo root bare metal; `/app` = repo mount in Docker).
 
 | file | format | purpose | hot reload? |
 |---|---|---|---|
-| `.env` | dotenv | HOST, PORT, MONGODB_URI, MAX_WORKERS, TLS paths, USERNAME, PASSWORD_HASH (single-quoted!), JWT_SECRET | **No** — dotenvy reads at process start; `docker compose restart api` needed |
+| `.env` | dotenv | HOST, PORT, MONGODB_URI, MAX_WORKERS, MAX_INSERT_BATCH, TLS paths, USERNAME, PASSWORD_HASH (single-quoted!), JWT_SECRET | **No** — dotenvy reads at process start; `docker compose restart api` needed |
 | `config` | XDB1 magic + crc32 + bincode | all tunables + history/redo/blocked | **Yes** — file watcher (500ms debounce) AND `/dashboard/api/config/reload` |
 | `config.bak…` | same | automatic backup rotation (MAX_BACKUPS=5) on save; fallback on corruption | n/a |
 | `authorized_keys.yml` | YAML | app credentials (Argon2id hashes) + layered permissions | **Yes** — file watcher (500ms debounce) + `/perms/reload` |
@@ -178,7 +178,7 @@ npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (on
 # typecheck the dashboard TS (esbuild does NOT typecheck):
 #   npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
 cargo build                      # debug; on Windows fails while the server is running (file lock)
-cargo test                       # 44 unit + 97 integration tests (tests/); needs a running server
+cargo test                       # 44 unit + 102 integration tests (tests/); needs a running server
                                  #   + MongoDB — see "Integration battery" below
                                  # XDB_TEST_MONGO_URI=mongodb://127.0.0.1:27017 additionally runs the
                                  #   Mongo-backed pagination-equivalence test (scratch db, dropped after)
@@ -193,7 +193,7 @@ cargo run --manifest-path examples/Cargo.toml --bin projection
 
 #### Integration battery (tests/ — black-box HTTP, needs server + MongoDB up)
 
-97 tests across 12 files (auth_flow, perms_matrix, meta_endpoints, crud_verbs,
+102 tests across 12 files (auth_flow, perms_matrix, meta_endpoints, crud_verbs,
 edge_data, query_filters, projection, pagination, dashboard_api, multi_app,
 watcher_reload, smoke). Every /auth costs ~5 s Argon2id and shares a 30/min
 per-IP throttle, so JWTs + the admin cookie are cached in `<temp>/xdb_tb_cache`
@@ -300,10 +300,21 @@ browser (API contracts verified via curl only — see §9 gaps).
   keyset pagination and the array-sort guard keep working — cursors are
   projection-independent. Response `{documents:[…], next_cursor, has_more, truncated,
   limit_applied, count}`. Server caps `limit` at the app's adaptive limit.
-- POST: `{filter?, data}` — no filter = insert (201 `{inserted_count,
-  inserted_id}`); with filter = update (200 `{matched_count, modified_count}`).
-  **`data` is auto-wrapped in `$set` server-side** (routes_q.rs:421,447) —
-  clients send plain `data: {field: value}`, NOT `{$set:…}`.
+- POST: `{filter?, data}` — no filter = insert (201): `data` object →
+  `insert_one` (`{inserted_count:1, inserted_id}`); `data` array → `insert_many`
+  (`{inserted_count:n, inserted_ids:[…]}` in input order, cap
+  `state.max_insert_batch` — env `MAX_INSERT_BATCH`, default 1000 (main.rs,
+  routes_q.rs `MAX_INSERT_BATCH`), must be ≥ 1, also published top-level in
+  `/health`; empty/
+  non-object/dup-`_id`-within-batch → 400 with nothing inserted; dup against
+  existing data → 409 with ordered semantics — docs before the dup remain).
+  With filter = update (200 `{matched_count, modified_count}`).
+  **`data` is auto-wrapped in `$set` server-side** (routes_q.rs:480) —
+  clients send plain `data: {field: value}`, NOT `{$set:…}`. Batch inserts
+  count their document count into per-client rate accounting (rps) — a
+  1000-doc batch reads as 1000 work units (routes_q.rs `record_request`).
+  **No upsert-many**: batch writes are insert-only; upserts stay single-document
+  (PATCH `{filter, data}`).
 - PUT = update (404 if 0 matched). PATCH = upsert (200 updated / 201
   inserted). DELETE `{filter}` → `{deleted_count}` (404 if 0).
 - Cursor pagination: keyset, opaque base64url cursor
@@ -375,9 +386,11 @@ browser (API contracts verified via curl only — see §9 gaps).
 
 - `GET /health` (public, cached, default TTL 5s):
   `{status:"ok|degraded|unhealthy", checked_at_ms, next_refresh_seconds,
-  compute_latency_ms, qps, app:{status,uptime_s,p50_latency_ms,
-  total_requests,active_cursors}, mongodb:{reachable,ping_latency_ms,error}}` —
-  200 only when ok, else 503.
+  compute_latency_ms, qps, max_insert_batch, app:{status, uptime_s,
+  p50_latency_ms, total_requests, active_cursors}, mongodb:{reachable,
+  ping_latency_ms, error}}` — 200 only when ok, else 503. `max_insert_batch`
+  is the insert-batch cap (MAX_INSERT_BATCH env), static per process — the
+  battery reads it from here so cap-boundary tests work with custom values.
 
 ### 5.8 Dashboard
 
@@ -567,6 +580,7 @@ Known gaps / things to check:
   - Missing/null sort values sort BEFORE NaN ascending (Mongo 8 order: null < NaN < numbers). `$gte` on a Decimal128 matches int/double values too (cross-type).
   - Watcher: a reload re-stamps the loaded bytes, so a byte-identical restore of authorized_keys.yml IS picked up automatically (FIXED 2026-08-14 — it previously required an explicit `/perms/reload`).
   - `truncated:true` + `limit_applied` = enforced cap when the client requested more than the adaptive limit; `next_cursor` only appears when the set was actually cut.
+  - Insert-many (2026-08-15): `data` as array → `insert_many` (cap 1000, empty/non-object element/dup-`_id`-within-batch → 400 with NOTHING inserted; dup against existing data → 409 with ordered semantics, docs before the dup remain). Driver 3.8 facts the battery verified: `insert_many` write failures arrive as `ErrorKind::InsertMany(InsertManyError)` (NOT `WriteFailure::WriteError` — error.rs needed a dedicated arm) and `InsertManyResult.inserted_ids` is a `HashMap<usize, Bson>` (NOT BTreeMap — dbq.rs sorts by index so `inserted_ids` keeps input order). Batch size counts into per-client rate accounting (rps).
 - **Dotted sort keys (`{"a.b":1}`) paginate incorrectly** — pre-existing latent bug (found 2026-08-11 during projection design; code-verified, not live-verified): `bson::Document::get` is an exact top-level lookup (no dotted resolution), so `make_next_cursor` reads a Null boundary and the array-sort guard goes blind → wrong pagination on collections sorted by nested fields. Fix = `get_path` helper + equivalence-test guard; treat as separate follow-up.
 - Dashboard UI never browser-tested (API contracts verified via curl only) —
   first browser pass may reveal weight-popover overflow, legend wrap, slider feel.
@@ -577,8 +591,8 @@ Known gaps / things to check:
 - `config` hot-reload + atomic-rename editors (vim etc.) may detach the notify
   watcher — restart re-attaches.
 
-Verification checkpoints after code changes: `cargo test` (141 tests — 44
-unit + 97 integration; with XDB_TEST_MONGO_URI set it also runs the keyset
+Verification checkpoints after code changes: `cargo test` (146 tests — 44
+unit + 102 integration; with XDB_TEST_MONGO_URI set it also runs the keyset
 pagination-equivalence test against real MongoDB — phase 1: NaN/±Inf datasets
 must match a full scan exactly; phase 2: array datasets must either match
 exactly or stop with the explicit 400, never diverge silently), full
