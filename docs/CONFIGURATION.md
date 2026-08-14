@@ -16,6 +16,7 @@ Three places hold configuration:
 | `PORT` | `8000` | listen port |
 | `MONGODB_URI` | `mongodb://localhost:27017` | MongoDB connection string |
 | `MAX_WORKERS` | `4` | Tokio worker threads |
+| `MAX_INSERT_BATCH` | `1000` | max documents per insert batch (`POST /q` with array `data`); must be ≥ 1, larger batches → `400` |
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | empty | PEM cert + key → serve HTTPS; both files are hot-reloaded on change; ignored when invalid |
 | `USERNAME` | `admin` | dashboard login name |
 | `PASSWORD_HASH` | empty | Argon2id PHC hash of the dashboard password. **Must be single-quoted** (`'$argon2id$…'`) because of the `$` signs. Empty → generated once and printed to the terminal |

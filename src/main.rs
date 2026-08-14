@@ -401,6 +401,11 @@ async fn run(max_workers: usize) {
         .and_then(|p| p.parse().ok())
         .filter(|p| *p > 0) // PORT=0 would bind an ephemeral port silently
         .unwrap_or(8000);
+    let max_insert_batch: usize = std::env::var("MAX_INSERT_BATCH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0) // 0/garbage would reject every batch — fall back
+        .unwrap_or(crate::routes_q::MAX_INSERT_BATCH);
     let mongodb_uri = env_str("MONGODB_URI", "mongodb://localhost:27017");
 
     // --- config + perms ---
@@ -473,6 +478,7 @@ async fn run(max_workers: usize) {
         config_path,
         perms_path,
         env_str("USERNAME", "admin"),
+        max_insert_batch,
     );
 
     // --- logging (stdout + in-memory ring for the dashboard) ---

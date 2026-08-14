@@ -66,6 +66,8 @@ pub struct AppState {
     pub perms_path: std::path::PathBuf,
     /// Admin username from .env.
     pub admin_user: String,
+    /// Max documents per insert batch (MAX_INSERT_BATCH env, default 1000).
+    pub max_insert_batch: usize,
 }
 
 impl AppState {
@@ -79,6 +81,7 @@ impl AppState {
         config_path: std::path::PathBuf,
         perms_path: std::path::PathBuf,
         admin_user: String,
+        max_insert_batch: usize,
     ) -> Arc<Self> {
         Arc::new(Self {
             config: RwLock::new(config),
@@ -107,6 +110,7 @@ impl AppState {
             config_path,
             perms_path,
             admin_user,
+            max_insert_batch,
         })
     }
 }

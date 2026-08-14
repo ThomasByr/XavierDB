@@ -129,12 +129,30 @@ Response `200`:
 
 ### POST /q/{db}/{coll}
 
-Body: `{ "filter"?: object, "data": object }`
+Body: `{ "filter"?: object, "data": object | object[] }`
 
-- without `filter` → **insert** → `201 Created` `{ "inserted_count": 1, "inserted_id": "…" }`
-  (`inserted_id` is the real stored `_id`; non-ObjectId ids are echoed in
-  their plain JSON form)
+- without `filter` → **insert** → `201 Created`:
+  - `data` = **object** → single insert → `{ "inserted_count": 1, "inserted_id": "…" }`
+    (`inserted_id` is the real stored `_id`; non-ObjectId ids are echoed in
+    their plain JSON form)
+  - `data` = **array** → batch insert → `{ "inserted_count": n, "inserted_ids": ["…", …] }`
+    (`inserted_ids` in input order; docs without `_id` get a generated ObjectId)
 - with `filter` → **update all matching** (`$set` data) → `200` `{ "matched_count": n, "modified_count": n }`
+
+Batch insert (`data` as array) rules:
+- the array must be non-empty, every element must be a JSON object, and the
+  batch is capped at **`MAX_INSERT_BATCH`** (default 1000 documents,
+  configurable via the `.env` — see CONFIGURATION.md) — violations return
+  `400` `BAD_REQUEST` with **nothing inserted**.
+- a `_id` duplicated *within* the batch is rejected up front with `400`
+  `BAD_REQUEST` (no partial write).
+- a `_id` that already exists in the collection returns `409 CONFLICT` with
+  MongoDB ordered semantics: the insert aborts at the first duplicate and
+  documents *before* it remain inserted.
+
+> **No upsert-many**: batch writes are insert-only — there is no bulk upsert /
+> bulk-update endpoint. Upserts remain single-document (PATCH `{filter, data}`,
+> see below).
 
 ### PUT /q/{db}/{coll}
 
@@ -156,7 +174,9 @@ Body: `{ "filter": object }` — delete all matching. `200`
 - Permission actions map 1:1 to HTTP methods; a request needs
   `action` on `db.coll` for the caller's effective rules
   (see `authorized_keys.yml.example` for the resolution order).
-- All write operations use MongoDB `$set` semantics on `data`.
+- Updates auto-wrap `data` in MongoDB `$set` (see above); pure inserts
+  store the documents verbatim (extended-JSON tokens like `$oid`, `$date`,
+  `$numberDecimal` are converted server-side).
 - Error messages are sanitized (paths, IPv4/IPv6 removed) before leaving the
   server; internal database failures return a generic message (details only
   in the server log). Bare hostnames / `host:port` pairs are not scrubbed.
@@ -174,6 +194,7 @@ in the background — spamming it costs nothing.
   "next_refresh_seconds": 5,
   "compute_latency_ms": 2.3,          // p50 server-side processing time (no network)
   "qps": 8.2,
+  "max_insert_batch": 1000,           // insert-batch cap (MAX_INSERT_BATCH env; static per process)
   "app": { "status": "ok", "uptime_s": 25, "p50_latency_ms": 2.3,
            "total_requests": 1000, "active_cursors": 3 },
   "mongodb": { "reachable": true, "ping_latency_ms": 1.4, "error": null } }

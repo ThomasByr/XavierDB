@@ -905,6 +905,25 @@ pub async fn insert_one(
     Ok(r.inserted_id)
 }
 
+pub async fn insert_many(
+    state: &AppState,
+    db: &str,
+    coll: &str,
+    docs: Vec<Document>,
+) -> Result<Vec<Bson>, ApiError> {
+    let r = state
+        .mongo
+        .database(db)
+        .collection::<Document>(coll)
+        .insert_many(docs)
+        .await?;
+    // inserted_ids is keyed by input index (a HashMap in driver 3.x) — sort
+    // by index so the response order matches the request order
+    let mut ids: Vec<(usize, Bson)> = r.inserted_ids.into_iter().collect();
+    ids.sort_by_key(|(i, _)| *i);
+    Ok(ids.into_iter().map(|(_, id)| id).collect())
+}
+
 pub async fn update_many(
     state: &AppState,
     db: &str,

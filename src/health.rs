@@ -20,6 +20,8 @@ pub struct HealthDoc {
     pub next_refresh_seconds: u64,
     pub compute_latency_ms: f64,
     pub qps: f64,
+    /// Insert-batch cap (MAX_INSERT_BATCH env) — static per process.
+    pub max_insert_batch: usize,
     pub app: AppHealth,
     pub mongodb: MongoHealth,
 }
@@ -89,6 +91,7 @@ pub async fn refresh_health(state: &Arc<AppState>) -> HealthDoc {
         next_refresh_seconds: ttl,
         compute_latency_ms: p50,
         qps,
+        max_insert_batch: state.max_insert_batch,
         app: AppHealth {
             status: status.to_string(),
             uptime_s: state.started.elapsed().as_secs(),

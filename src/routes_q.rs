@@ -4,11 +4,13 @@
 //! Routes:
 //!   GET    /ls                   top-level: list databases the caller may GET (?db=X → its collections)
 //!   GET    /q/{db}/{coll}       find (filter, limit, sort, cursor)
-//!   POST   /q/{db}/{coll}       insert (no filter) or update-many ($set)
+//!   POST   /q/{db}/{coll}       insert (no filter: object → insert_one, array → insert_many)
+//!                                or update-many ($set)
 //!   PUT    /q/{db}/{coll}       update-many ($set), 404 when nothing matched
 //!   PATCH  /q/{db}/{coll}       upsert, 201 when a document was inserted
 //!   DELETE /q/{db}/{coll}       delete-many, 404 when nothing deleted
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -26,6 +28,12 @@ use crate::config::BlockStatus;
 use crate::dbq::{self, Cursor};
 use crate::error::{ApiError, ApiErrorKind, JsonBody, QueryBody};
 use crate::state::{AppState, ClientStats};
+
+/// Default max documents per insert batch (POST /q with array `data`) when
+/// the MAX_INSERT_BATCH env var is unset or invalid. Bounds the write work a
+/// single request can trigger; also caps the adaptive-limit weight that
+/// counts into per-client rate accounting.
+pub const MAX_INSERT_BATCH: usize = 1000;
 
 // ---------------------------------------------------------------------------
 // auth extraction
@@ -97,7 +105,11 @@ pub async fn authorize(
 // per-request bookkeeping (no locks held across await)
 // ---------------------------------------------------------------------------
 
-fn record_request(state: &AppState, claims: &Claims, started: Instant) {
+/// Per-request bookkeeping (no locks held across await). `weight` is the
+/// request's work units — 1 for ordinary requests, the document count for
+/// batch inserts — so per-client rate accounting (rps/sparklines) reflects
+/// write volume, not just request count.
+fn record_request(state: &AppState, claims: &Claims, started: Instant, weight: u32) {
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
     state.total_requests.fetch_add(1, Ordering::Relaxed);
     if let Ok(mut ring) = state.latencies.lock() {
@@ -117,7 +129,7 @@ fn record_request(state: &AppState, claims: &Claims, started: Instant) {
                 ClientStats::new(&claims.sub, &claims.app)
             }
         });
-        entry.total.fetch_add(1, Ordering::Relaxed);
+        entry.total.fetch_add(weight as u64, Ordering::Relaxed);
         entry.last_seen.store(now, Ordering::Relaxed);
         if let Ok(mut lat) = entry.lat.lock() {
             lat.push_back(elapsed_ms);
@@ -219,7 +231,7 @@ pub async fn list_visible(
                 format!("no access to database '{db}'"),
             ));
         }
-        record_request(&state, &claims, started);
+        record_request(&state, &claims, started, 1);
         return Ok(Json(json!({ "db": db, "collections": colls })));
     }
 
@@ -267,7 +279,7 @@ pub async fn list_visible(
         None
     };
 
-    record_request(&state, &claims, started);
+    record_request(&state, &claims, started, 1);
     Ok(Json(json!({
         "databases": page,
         "next_cursor": next_cursor,
@@ -397,7 +409,7 @@ pub async fn find_docs(
         .iter()
         .map(|d| dbq::bson_to_json_projected(d, &strip))
         .collect();
-    record_request(&state, &claims, started);
+    record_request(&state, &claims, started, 1);
     Ok(Json(json!({
         "documents": out,
         "next_cursor": next_cursor,
@@ -428,27 +440,46 @@ pub async fn insert_or_update(
     check_path(&db, &coll)?;
 
     if body.filter.is_none() {
-        // pure insert
+        // pure insert: JSON object -> insert_one, JSON array -> insert_many
         let claims = authorize(&state, &headers, "POST", &db, &coll).await?;
         let data = body
             .data
             .clone()
             .ok_or_else(|| ApiError::bad_request("missing data"))?;
         let b = dbq::json_to_bson(&data).map_err(ApiError::bad_request)?;
-        let doc = dbq::require_object(&b, "data")?.clone();
-        let id = dbq::insert_one(&state, &db, &coll, doc).await?;
-        record_request(&state, &claims, started);
-        return Ok((
-            axum::http::StatusCode::CREATED,
-            Json(json!({ "inserted_count": 1, "inserted_id": dbq::bson_to_json(&id) })),
-        ));
+        return match b {
+            bson::Bson::Document(doc) => {
+                let id = dbq::insert_one(&state, &db, &coll, doc).await?;
+                record_request(&state, &claims, started, 1);
+                Ok((
+                    axum::http::StatusCode::CREATED,
+                    Json(json!({ "inserted_count": 1, "inserted_id": dbq::bson_to_json(&id) })),
+                ))
+            }
+            bson::Bson::Array(items) => {
+                let docs = batch_to_docs(items, state.max_insert_batch)?;
+                let ids = dbq::insert_many(&state, &db, &coll, docs).await?;
+                let n = ids.len();
+                record_request(&state, &claims, started, n as u32);
+                Ok((
+                    axum::http::StatusCode::CREATED,
+                    Json(json!({
+                        "inserted_count": n,
+                        "inserted_ids": ids.iter().map(dbq::bson_to_json).collect::<Vec<_>>(),
+                    })),
+                ))
+            }
+            _ => Err(ApiError::bad_request(
+                "data must be a JSON object or an array of JSON objects",
+            )),
+        };
     }
 
     // update-many with $set
     let claims = authorize(&state, &headers, "POST", &db, &coll).await?;
     let (filter, data) = body_filter_data(&body)?;
     let r = dbq::update_many(&state, &db, &coll, filter, doc! { "$set": data }, false).await?;
-    record_request(&state, &claims, started);
+    record_request(&state, &claims, started, 1);
     Ok((
         axum::http::StatusCode::OK,
         Json(json!({
@@ -456,6 +487,36 @@ pub async fn insert_or_update(
             "modified_count": r.modified_count,
         })),
     ))
+}
+
+/// Validate an insert batch (array `data`): non-empty, capped at
+/// MAX_INSERT_BATCH, every element a JSON object, and no duplicate `_id`
+/// within the batch — an ordered insert_many would otherwise half-apply the
+/// batch on a duplicate (Mongo aborts at the first dup key, earlier docs
+/// stay), so a clean 400 before Mongo avoids surprise partial writes.
+fn batch_to_docs(items: Vec<bson::Bson>, max_batch: usize) -> Result<Vec<Document>, ApiError> {
+    if items.is_empty() {
+        return Err(ApiError::bad_request("insert batch must not be empty"));
+    }
+    if items.len() > max_batch {
+        return Err(ApiError::bad_request(format!(
+            "insert batch too large (max {max_batch} documents)"
+        )));
+    }
+    let mut docs = Vec::with_capacity(items.len());
+    let mut seen: HashSet<Value> = HashSet::with_capacity(items.len());
+    for (i, item) in items.into_iter().enumerate() {
+        let doc = dbq::require_object(&item, &format!("data[{i}]"))?.clone();
+        if let Some(id) = doc.get("_id") {
+            // canonical extended JSON == type-sensitive equality, matching
+            // how MongoDB's _id index treats 1 vs 1.0 as different keys
+            if !seen.insert(id.clone().into_canonical_extjson()) {
+                return Err(ApiError::bad_request("duplicate _id within insert batch"));
+            }
+        }
+        docs.push(doc);
+    }
+    Ok(docs)
 }
 
 pub async fn put_update(
@@ -474,7 +535,7 @@ pub async fn put_update(
         ));
     }
     let r = dbq::update_many(&state, &db, &coll, filter, doc! { "$set": data }, false).await?;
-    record_request(&state, &claims, started);
+    record_request(&state, &claims, started, 1);
     if r.matched_count == 0 {
         return Err(ApiError::not_found("no document matched the filter"));
     }
@@ -501,7 +562,7 @@ pub async fn patch_upsert(
         return Err(ApiError::bad_request("PATCH requires a filter"));
     }
     let r = dbq::update_many(&state, &db, &coll, filter, doc! { "$set": data }, true).await?;
-    record_request(&state, &claims, started);
+    record_request(&state, &claims, started, 1);
     let upserted = r.upserted_id.is_some();
     let upserted_id = r.upserted_id.as_ref().map(dbq::bson_to_json);
     let status = if upserted {
@@ -552,7 +613,7 @@ pub async fn delete_docs(
         None => return Err(ApiError::bad_request("missing filter")),
     };
     let r = dbq::delete_many(&state, &db, &coll, filter).await?;
-    record_request(&state, &claims, started);
+    record_request(&state, &claims, started, 1);
     if r.deleted_count == 0 {
         return Err(ApiError::not_found("no document matched the filter"));
     }

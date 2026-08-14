@@ -225,6 +225,22 @@ impl From<mongodb::error::Error> for ApiError {
             {
                 ApiErrorKind::BadRequest
             }
+            // insert_many (ordered) surfaces write failures as
+            // ErrorKind::InsertMany with per-document codes, not WriteError
+            ErrorKind::InsertMany(ime) => {
+                let codes: Vec<i32> = ime
+                    .write_errors
+                    .as_ref()
+                    .map(|wes| wes.iter().map(|w| w.code).collect())
+                    .unwrap_or_default();
+                if codes.iter().any(|&c| c == 11000) {
+                    ApiErrorKind::Conflict
+                } else if codes.iter().any(|&c| is_client_command(c)) {
+                    ApiErrorKind::BadRequest
+                } else {
+                    ApiErrorKind::Internal
+                }
+            }
             _ => ApiErrorKind::Internal,
         };
         let msg = match kind {
