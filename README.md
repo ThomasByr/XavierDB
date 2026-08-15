@@ -223,4 +223,4 @@ so a warm run performs no Argon2id logins and stale tokens are refreshed
 automatically. On Windows the debug server binary locks itself: kill the
 server, `cargo build --tests`, restart it, then `cargo test` — and never run a
 plain `cargo build` between `cargo build --tests` and `cargo test` (it
-re-dirties the test-mode fingerprint; details in AGENTS.md §0.4).
+re-dirties the test-mode fingerprint; details in `.agents/skills/restart-ritual.md`).
