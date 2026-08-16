@@ -1,0 +1,30 @@
+{
+  "git": {
+    "commitMessage": "chore: release v${version}",
+    "tagName": "v${version}",
+    "tagAnnotation": "v${version}"
+  },
+  "github": {
+    "release": false
+  },
+  "npm": {
+    "publish": false
+  },
+  "plugins": {
+    "@release-it/bumper": {
+      "out": [
+        { "file": "Cargo.toml", "type": "text/toml", "path": "package.version" },
+        { "file": "examples/Cargo.toml", "type": "text/toml", "path": "package.version" },
+        { "file": "web/package.json", "type": "application/json", "path": "version" },
+        { "file": "web/package-lock.json", "type": "application/json", "path": "version" }
+      ]
+    }
+  },
+  "hooks": {
+    "after:bump": [
+      "cargo check",
+      "cargo check --manifest-path examples/Cargo.toml",
+      "git add Cargo.lock examples/Cargo.lock"
+    ]
+  }
+}
