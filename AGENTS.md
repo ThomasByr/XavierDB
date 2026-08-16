@@ -62,6 +62,7 @@ file(s) before starting work, update them after.
 
 ```bash
 npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (only if TS changed)
+(cd web && npm install && npm run docs:build)  # rebuild VitePress site (web/ is its own npm project)
 # typecheck: npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
 cargo build                      # fails while the server is running on some OSes — see rule 4
 cargo test                       # 44 unit + 110 integration; needs a running server + MongoDB
