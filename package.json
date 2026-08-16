@@ -6,6 +6,8 @@
   "scripts": {
     "build": "esbuild src/assets/ts/app.ts --bundle --minify --outfile=src/assets/app.js --target=es2020",
     "watch": "esbuild src/assets/ts/app.ts --bundle --outfile=src/assets/app.js --watch",
+    "cargo:dev": "npm run build && cargo run",
+    "cargo:release": "npm run build && cargo run --release",
     "release": "release-it"
   },
   "keywords": [],
