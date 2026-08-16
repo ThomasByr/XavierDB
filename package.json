@@ -2,15 +2,20 @@
   "name": "xavierdb",
   "version": "1.0.0",
   "description": "",
+  "private": true,
   "scripts": {
     "build": "esbuild src/assets/ts/app.ts --bundle --minify --outfile=src/assets/app.js --target=es2020",
-    "watch": "esbuild src/assets/ts/app.ts --bundle --outfile=src/assets/app.js --watch"
+    "watch": "esbuild src/assets/ts/app.ts --bundle --outfile=src/assets/app.js --watch",
+    "release": "release-it"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
-    "esbuild": "^0.28.2"
+    "@release-it/bumper": "^8.0.0",
+    "esbuild": "^0.28.2",
+    "git-cliff": "^2.13.1",
+    "release-it": "^21.0.2"
   }
 }
