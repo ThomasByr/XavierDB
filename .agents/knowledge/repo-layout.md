@@ -3,6 +3,7 @@
 ```
 XavierDB/
 ├── README.md                    # quick start (Docker-first) + bare metal in <details>
+├── LICENSE                      # MIT, Copyright (c) 2026 Thomas BOUYER
 ├── AGENTS.md                    # minimum instructions + pointers to .agents/
 ├── .agents/                     # agent knowledge + skills (this tree)
 │   ├── knowledge/               #   reference facts (architecture, API contracts, ...)
@@ -15,6 +16,17 @@ XavierDB/
 ├── Dockerfile                   # node stage (esbuild) + single-stage rust:1-slim-bookworm build/run
 ├── .dockerignore                # excludes .env/config/config.bak*/authorized_keys.yml/target/node_modules/.git/.pi
 ├── .gitignore                   # /target, .env, authorized_keys.yml, config, config.bak*, node_modules/
+├── .github/workflows/            # CI/CD
+│   └── deploy-site.yml           #   VitePress site -> GitHub Pages (xavierdb.fr) on web/** changes
+├── web/                          # public marketing site — VitePress (its own npm project)
+│   ├── package.json / package-lock.json  # vitepress only; scripts: docs:dev/build/preview
+│   ├── .vitepress/config.mjs     #   title, base '/', cleanUrls, themeConfig.logo
+│   ├── .vitepress/theme/         #   index.js (extends DefaultTheme) + custom.css (home green gradients)
+│   ├── index.md                  #   home layout: hero title + logo + 2 buttons (GitHub, admin dashboard)
+│   ├── public/                   #   copied verbatim to site root
+│   │   ├── CNAME                 #     xavierdb.fr — GitHub Pages custom domain
+│   │   └── logo.png              #     site logo (navbar + hero), served at /logo.png
+│   └── .gitignore                #   node_modules/, .vitepress/dist/, .vitepress/cache/
 ├── Cargo.toml / Cargo.lock      # Rust workspace (axum, tokio, mongodb, rustls/aws-lc-sys, argon2, notify, serde_yaml…)
 ├── package.json / package-lock.json   # esbuild devDependency only (dashboard TS -> JS)
 ├── examples/                      # standalone crate: 8 runnable client examples (see examples/README.md)

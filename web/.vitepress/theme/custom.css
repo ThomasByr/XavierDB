@@ -1,0 +1,20 @@
+.VPContent.is-home {
+  background:
+    radial-gradient(900px 420px at 50% -8%, rgba(16, 185, 129, 0.16), transparent 70%),
+    linear-gradient(180deg, #f0fdf4 0%, #ecfdf5 60%, #e8f7ef 100%);
+}
+
+html.dark .VPContent.is-home {
+  background:
+    radial-gradient(900px 420px at 50% -8%, rgba(52, 211, 153, 0.18), transparent 70%),
+    linear-gradient(180deg, #03180c 0%, #052e1b 55%, #062f1c 100%);
+}
+
+.VPContent.is-home .VPHero {
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #15803d 10%, #0d9488 55%, #0f766e 90%);
+}
+
+html.dark .VPContent.is-home .VPHero {
+  --vp-home-hero-name-background: linear-gradient(120deg, #86efac 10%, #2dd4bf 55%, #5eead4 90%);
+}
