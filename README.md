@@ -47,8 +47,8 @@ docker compose up -d
 State persists on the host:
 
 > [!NOTE]
-> Put your data in `{HOME}/data/xavier-mongo-db` or edit [compose.yaml](compose.yaml)
-> to change the volume mount.
+> Put your MongoDB data in `{HOME}/data/xavier-mongo-db` or edit
+> [compose.yaml](compose.yaml) to change the volume mount.
 
 The API uses the repo's `.env` as-is. If `PASSWORD_HASH` is blank, the
 admin dashboard password is **generated and printed once** in the API
