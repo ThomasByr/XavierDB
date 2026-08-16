@@ -1,11 +1,19 @@
-# XavierDB
+# <img src="web/public/logo.png" width="32" height="32" style="vertical-align:middle"> XavierDB - Just less than MongoDB
 
-A small, fast HTTP server that exposes a **MongoDB database through a REST API**
-with per-client authentication, granular permissions, adaptive load control
-and a live admin dashboard.
+<p align="center">
+  <img src="assets/images/dashboard.png" alt="A Dashboard screenshot" width="480" />
+</p>
 
-> [!NOTE]
-> Built in Rust (axum + tokio + mongodb driver). No Python, no Node at runtime.
+> A small, fast HTTP server that exposes a **MongoDB database through a REST API**
+> with per-client authentication, granular permissions, adaptive load control
+> and a live admin dashboard.
+
+[![Rust](https://img.shields.io/badge/Rust-1.97+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Web Dashboard](https://img.shields.io/badge/Dashboard-Plain%20HTML%2FCSS%2FJS-purple?logo=html5&logoColor=white)](https://developer.mozilla.org/en-US/docs/Web)
+[![MongoDB](https://img.shields.io/badge/MongoDB-8.0+-green?logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+[![Docker](https://img.shields.io/badge/Docker-29.7+-blue?logo=docker&logoColor=white)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?logo=gitbook&logoColor=white)](https://opensource.org/licenses/MIT)
+[![GitHub profile](https://img.shields.io/badge/GitHub-ThomasByr-181717?logo=github&logoColor=white)](https://github.com/ThomasByr)
 
 | Method                    | Path             | Purpose                                                      |
 | ------------------------- | ---------------- | ------------------------------------------------------------ |
@@ -15,29 +23,11 @@ and a live admin dashboard.
 | GET                       | `/dashboard/`    | admin dashboard (login protected)                            |
 | GET                       | `/health`        | cached health document (public)                              |
 
-1. [Why this shape?](#why-this-shape)
-2. [Quick start (Docker)](#quick-start-docker)
-3. [Files](#files)
-4. [Examples](#examples)
-5. [Development](#development)
-6. [Tests](#tests)
-
-## Why this shape?
-
-- **JWT instead of a shared cookie/session table.** Verifying a JWT is one
-  HMAC-SHA256 — microseconds, no disk, no shared memory, no lock. Every worker
-  process can verify any token because the secret lives in process memory.
-  The expensive check (Argon2id hash of the client's secret token) happens
-  **once per login** on `/auth`, never on the hot `/q/` path.
-- **Permissions live in `authorized_keys.yml`** (glob patterns, app-level
-  inheritance, per-name overrides) and are reloaded live when the file changes.
-- **Adaptive per-request limits.** Each app gets a document limit that shrinks
-  when MongoDB latency or machine pressure rises and grows back when things
-  calm down. Oversized requests are answered with the first page plus an
-  opaque `next_cursor` (keyset pagination), so a client can never force the
-  server to load a huge result set into RAM.
-- **Everything tunable is tunable from the dashboard** — polling intervals,
-  formula coefficients, TTLs, blocklists, permissions.
+1. [Quick start (Docker)](#quick-start-docker)
+2. [Documentation](#documentation)
+3. [Examples](#examples)
+4. [Development](#development)
+5. [Tests](#tests)
 
 ## Quick start (Docker)
 
@@ -47,36 +37,26 @@ Prerequisites: Docker with Compose v2 (e.g. Docker Desktop).
 docker compose up --build -d
 ```
 
-This builds the API image (Rust server + dashboard assets) and starts it
-together with MongoDB, detached. Rebuilds are incremental — Docker reuses
-cached layers (Rust dependencies, `npm ci`), so only what changed gets
-rebuilt. If a stale image is ever suspected, force a full rebuild:
+Restarting the API:
 
 ```bash
-docker compose build --no-cache api   # no-cache is a `build` flag, not `up`
+docker compose build --no-cache api
 docker compose up -d
 ```
 
 State persists on the host:
 
-- MongoDB data → `${HOME}/data/xavier-mongo-db`
-- API state (`.env`, `config`, `config.bak`, `authorized_keys.yml`) → the repo
-  directory itself, mounted read-write over `/app`. The container uses the
-  repo files directly — `config` and `authorized_keys.yml` edits are picked up
-  live (hot reload); `.env` needs `docker compose restart api`.
+> [!NOTE]
+> Put your data in `{HOME}/data/xavier-mongo-db` or edit [compose.yaml](compose.yaml)
+> to change the volume mount.
 
-First start:
+The API uses the repo's `.env` as-is. If `PASSWORD_HASH` is blank, the
+admin dashboard password is **generated and printed once** in the API
+container logs (it is hashed into `.env` — `USERNAME` defaults to `admin`):
 
-1. The API uses the repo's `.env` as-is. If `PASSWORD_HASH` is blank, the
-   admin dashboard password is **generated and printed once** in the API
-   container logs (it is hashed into `.env` — `USERNAME` defaults to `admin`):
-
-   ```bash
-   docker compose logs api
-   ```
-
-2. If the repo has no valid `config`, a default binary config file is created
-   in the repo.
+```bash
+docker compose logs api
+```
 
 <details>
 <summary>Bare metal (no Docker)</summary>
@@ -84,22 +64,17 @@ First start:
 Prerequisites: Rust (stable), a running MongoDB (default `mongodb://localhost:27017`).
 
 ```bash
-npm install        # generate src/assets/app.js (dashboard TypeScript -> JS)
+npm install           # generate src/assets/app.js (dashboard TypeScript -> JS)
 npm run build
 
-cargo build --release
-
-cp .env.example .env                  # edit HOST/PORT/MONGODB_URI if needed
+cp .env.example .env  # edit HOST/PORT/MONGODB_URI if needed
 cp authorized_keys.yml.example authorized_keys.yml
 
-./target/release/XavierDB            # Windows: ./target/release/XavierDB.exe
+cargo run --release
 ```
 
-First start:
-
-1. The admin dashboard password is **generated and printed once in the
-   terminal** (it is hashed into `.env` — `USERNAME` defaults to `admin`).
-2. A default binary config file `config` is created.
+The admin dashboard password is **generated and printed once in the
+terminal** (it is hashed into `.env` — `USERNAME` defaults to `admin`).
 
 </details>
 
@@ -128,28 +103,23 @@ Then:
 The token is also returned as an HttpOnly cookie, so browsers can just log in
 once per session.
 
-## Files
+## Documentation
 
-| file                          | purpose                                                                     |
-| ----------------------------- | --------------------------------------------------------------------------- |
-| `.env.example`                | documented template — copy it to `.env`                                     |
-| `.env`                        | host/port, MongoDB URI, workers, TLS paths, dashboard credentials           |
-| `authorized_keys.yml`         | app credentials (Argon2id hashes) + permissions                             |
-| `config`                      | binary settings file (dashboard-editable, undo/redo history)                |
-| `config.bak…`                 | automatic backups of the config file                                        |
-| `authorized_keys.yml.example` | documented permissions template                                             |
-| `tests/`                      | integration battery: 97 black-box HTTP tests + `bootstrap.sh` fixture setup |
-| `examples/`                   | standalone crate with 8 runnable client examples (see its README)           |
-
-See `docs/API_REFERENCE.md`, `docs/CONFIGURATION.md`, `docs/ADMIN_GUIDE.md` for details.
+- [ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md) for the dashboard and its API
+- [API_REFERENCE.md](docs/API_REFERENCE.md) for the full API reference
+- [CONFIGURATION.md](docs/CONFIGURATION.md) for the `.env` and `authorized_keys.yml` formats
 
 ## Examples
 
 Runnable Rust client examples live in `examples/` — a standalone crate with
-its own lockfile, so they never add dependencies to the server. Each example
-is a pair: a `setup_*` program that uses the **dashboard API** to create the
-app id + permissions, and a showcase program that exercises the **client
-API**. They need a running server and the dashboard password:
+its own lockfile.
+
+Each example is a pair:
+
+- a `setup_*` program that uses the **dashboard API** to create the app id + permissions,
+- and a showcase program that exercises the **client API**.
+
+They need a running server and the dashboard password:
 
 ```bash
 cargo run --manifest-path examples/Cargo.toml --bin setup_projection -- \
@@ -157,9 +127,7 @@ cargo run --manifest-path examples/Cargo.toml --bin setup_projection -- \
 cargo run --manifest-path examples/Cargo.toml --bin projection
 ```
 
-The full list — projection, pagination, query, write, ls, errors, health,
-pernames — with per-example launch commands and options is in
-`examples/README.md`.
+Read more in the [examples](examples/README.md) README.
 
 ## Development
 
@@ -188,30 +156,15 @@ needed at runtime.
 
 Two tiers, both launched with `cargo test` (44 unit + 110 integration = 154):
 
-- **Inline unit tests** live in `src/` next to the code (`#[cfg(test)]`
-  modules): config-file round-trips and backup rotation, permission parsing
-  and layering, keyset-cursor construction and tamper rejection, projection
-  parse/union/strip, extended-JSON round-trips, error sanitization.
-- **Integration battery** in `tests/` — black-box HTTP tests against a
-  running server + MongoDB, with multiple apps and real-world scenarios:
-  auth flows, the permission matrix (globs, name-vs-app layering, blocking),
-  CRUD verbs and extended-JSON data, filters/sorts/projections/keyset
-  pagination (incl. NaN and array edge cases), `/ls` and `/health`, the
-  dashboard API (perms/config/block/weight/metrics), file-watcher reloads,
-  and multi-app scenarios like concurrent writers and app deletion mid-flight.
-
-Commands (a running server + MongoDB are required for the integration
-battery; see below):
-
 ```bash
 cargo test                              # everything: 44 unit + 110 integration
 cargo test --bin XavierDB               # inline unit tests only
 cargo test --test auth_flow             # one integration suite (12 suites total)
-XDB_TEST_MONGO_URI=mongodb://127.0.0.1:27017 cargo test   # + the Mongo-backed
-                                        #   pagination-equivalence test
+XDB_TEST_MONGO_URI=mongodb://127.0.0.1:27017 cargo test  # + the Mongo-backed
+                                        # pagination-equivalence test
 ```
 
-The battery needs the fixture world (6 apps + 8 databases), created once per
+The whole battery needs the fixture world (6 apps + 8 databases), created once per
 machine via the dashboard API:
 
 ```bash
@@ -220,7 +173,4 @@ bash tests/bootstrap.sh --dash-user <dashboard-user> --dash-pass '<dashboard-pas
 
 It caches JWTs and the admin cookie in the system temp dir (`xdb_tb_cache`),
 so a warm run performs no Argon2id logins and stale tokens are refreshed
-automatically. On Windows the debug server binary locks itself: kill the
-server, `cargo build --tests`, restart it, then `cargo test` — and never run a
-plain `cargo build` between `cargo build --tests` and `cargo test` (it
-re-dirties the test-mode fingerprint; details in `.agents/skills/restart-ritual.md`).
+automatically.
