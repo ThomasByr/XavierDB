@@ -32,12 +32,19 @@
 <!-- ===================== APP SHELL ===================== -->
 <div id="app" class="app hidden">
   <header class="topbar elevation-0">
-    <button id="nav-toggle" class="icon-btn" aria-label="Toggle navigation">&#9776;</button>
-    <img id="topbar-logo" src="/dashboard/logo.png" alt="">
-    <div class="topbar-title">XavierDB <span id="page-title" class="topbar-page"></span></div>
+    <a class="topbar-brand" href="/dashboard">
+      <img id="topbar-logo" src="/dashboard/logo.png" alt="">
+      <span class="brand-name">XavierDB</span>
+    </a>
+    <div class="topbar-title"><span id="page-title" class="topbar-page"></span></div>
     <div class="topbar-actions">
-      <span id="mongo-dot" class="dot" title="MongoDB status"></span>
-      <button id="refresh-btn" class="icon-btn" title="Refresh now">&#x21bb;</button>
+      <div class="mongo-widget" title="MongoDB status">
+        <button id="mongo-btn" class="mongo-status">
+          <span id="mongo-dot" class="dot"></span>
+          <span>MongoDB status</span>
+        </button>
+        <button id="mongo-refresh" class="mongo-refresh" title="Refresh MongoDB status">&#x21bb;</button>
+      </div>
       <button id="theme-btn" class="icon-btn" title="Toggle theme">&#9681;</button>
       <button id="logout-btn" class="btn btn-text">Logout</button>
     </div>

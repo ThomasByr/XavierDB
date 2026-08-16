@@ -337,7 +337,7 @@ function renderOverviewData(m: Metrics) {
     c.sub.textContent = d.sub(s);
     drawMini(c.canvas, smooth(d.key, d.raw(s)), getCss(d.color));
   }
-  $("#mongo-dot").className = "dot " + (health ? "ok" : "bad");
+  updateMongoStatus(m.health);
 }
 
 function getCss(v: string): string {
@@ -375,6 +375,28 @@ function drawMini(canvas: HTMLCanvasElement, data: number[], color: string) {
   ctx.fillStyle = color;
   ctx.fill();
   ctx.globalAlpha = 1;
+}
+
+function updateMongoStatus(h: any) {
+  const st = h?.status ?? "unhealthy";
+  const m = h?.mongodb ?? {};
+  const dot = $("#mongo-dot");
+  if (dot) dot.className = "dot " + (st === "ok" ? "ok" : st === "degraded" ? "warn" : "bad");
+  const btn = $("#mongo-btn");
+  if (!btn) return;
+  btn.title = st === "ok"
+    ? `MongoDB reachable — ping ${fmtNum(m.ping_latency_ms ?? 0, 1)} ms`
+    : st === "degraded"
+      ? `MongoDB degraded — ping ${fmtNum(m.ping_latency_ms ?? 0, 1)} ms`
+      : `MongoDB DOWN — ${m.error ?? "unreachable"}`;
+}
+
+async function refreshMongoStatus(): Promise<any> {
+  const res = await fetch("/health");
+  const h = await res.json().catch(() => ({}));
+  if (lastMetrics) lastMetrics.health = h;
+  updateMongoStatus(h);
+  return h;
 }
 
 /* ============================= clients & permissions ============================= */
@@ -523,7 +545,7 @@ function mergedApps(m: Metrics) {
 function renderClientsData(m: Metrics) {
   const tree = $("#clients-tree");
   if (!tree) return;
-  $("#mongo-dot").className = "dot " + (m.health.status === "ok" ? "ok" : "bad");
+  updateMongoStatus(m.health);
   const apps = mergedApps(m);
   $("#clients-summary").textContent = `${apps.length} app(s), ${apps.reduce((a, b) => a + b.names.length, 0)} name(s)`;
   if (permsData && m.config.perms_version !== permsData.version) loadPermsData();
@@ -1987,13 +2009,23 @@ function applyTheme(theme: string) {
 }
 
 function initShell() {
-  $("#nav-toggle").onclick = () => $("#drawer").classList.toggle("open");
   $("#logout-btn").onclick = async () => {
     await fetch("/dashboard/api/logout", { method: "POST", credentials: "same-origin" });
     stopPolling();
     showLogin();
   };
-  $("#refresh-btn").onclick = () => { if (pollEnabled) poll(); };
+  $("#mongo-btn").onclick = async () => {
+    try {
+      const h = await refreshMongoStatus();
+      const st = h?.status ?? "unhealthy";
+      const m = h?.mongodb ?? {};
+      const ping = st === "unhealthy" ? "" : ` — ping ${fmtNum(m.ping_latency_ms ?? 0, 1)} ms`;
+      snack(`MongoDB ${st === "ok" ? "reachable" : st}${ping}${m.error ? ` — ${m.error}` : ""}`);
+    } catch { snack("health check failed"); }
+  };
+  $("#mongo-refresh").onclick = async () => {
+    try { await refreshMongoStatus(); } catch { }
+  };
   $("#theme-btn").onclick = () => {
     const cur = document.documentElement.dataset.theme;
     const next = cur === "dark" ? "light" : "dark";

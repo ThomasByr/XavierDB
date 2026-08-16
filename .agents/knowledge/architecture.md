@@ -283,6 +283,17 @@
 
 ### Dashboard UI architecture (src/assets/ts/app.ts)
 
+- Topbar: `.mongo-widget` = pill containing `#mongo-btn` (`.mongo-status`:
+  `#mongo-dot` + "MongoDB status" text) and `#mongo-refresh` (↻ INSIDE the
+  pill). Dot maps /health status ok → `.ok` green, degraded → `.warn`
+  orange, unhealthy → `.bad` red via `updateMongoStatus(h)` (called from
+  BOTH `renderOverviewData` and `renderClientsData`); tooltip carries ping
+  latency / error. `refreshMongoStatus()` fetches `/health` directly (public
+  root route, NOT via `api()` which prefixes `/dashboard/api`), updates
+  `lastMetrics.health` + the dot, returns the doc. `#mongo-refresh` = silent
+  refresh; `#mongo-btn` click = same + snackbar with fresh status/ping. The
+  old standalone `#refresh-btn` (metrics poll) is gone.
+
 - Overview: 4 stat chips + 5 mini chart cards (CPU, Memory, Disk, Download,
   Upload) via `drawMini()`.
 - Clients: `renderClients()` builds the shell once; `renderClientsData(m)`
