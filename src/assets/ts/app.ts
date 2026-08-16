@@ -1457,7 +1457,7 @@ function renderConfigForm() {
     ["General", null, [
       { path: "global.permission_file", label: "Permissions file", kind: "text" },
       { path: "global.jwt_token_lifetime_minutes", label: "JWT lifetime", kind: "range", min: 30, max: 1440, step: 30, unit: "min" },
-      { path: "auth.max_per_minute_per_ip", label: "Auth attempts per IP / minute", kind: "range", min: 1, max: 100, step: 1 },
+      { path: "auth.max_per_minute_per_ip", label: "Client /auth attempts per IP / minute", kind: "range", min: 1, max: 100, step: 1 },
       { path: "auth.session_ttl_hours", label: "Admin session TTL", kind: "range", min: 1, max: 72, step: 1, unit: "h" },
     ]],
     ["Rate limiting", "Every tick (tick_seconds) each app's limit shrinks by 1/(1 + latency_sensitivity·lat_err + pressure_sensitivity·pressure) under load, and grows by growth_rate when healthy. enforced = clamp(round(limit · multiplier · weight), min, max) — the per-app weight is set in Clients.", [

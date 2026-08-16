@@ -5,7 +5,7 @@ directory (repo root bare metal; `/app` = repo mount in Docker).
 
 | file | format | purpose | hot reload? |
 |---|---|---|---|
-| `.env` | dotenv | HOST, PORT, MONGODB_URI, MAX_WORKERS, MAX_INSERT_BATCH, TLS paths, USERNAME, PASSWORD_HASH (single-quoted!), JWT_SECRET, LOG_FILES (1–10), LOG_SIZE_MB (1–20) | **No** — dotenvy reads at process start; restart the process (`docker compose restart api` in Docker) |
+| `.env` | dotenv | HOST, PORT, MONGODB_URI, MAX_WORKERS, MAX_INSERT_BATCH, TLS paths, USERNAME, PASSWORD_HASH (single-quoted!), JWT_SECRET, MAX_LOGINS_PER_IP_PER_MINUTE (default 5; DASHBOARD login only — /auth always uses config `auth.max_per_minute_per_ip`), LOG_FILES (1–10), LOG_SIZE_MB (1–20) | **No** — dotenvy reads at process start; restart the process (`docker compose restart api` in Docker) |
 | `config` | XDB1 magic + crc32 + bincode | all tunables + history/redo/blocked | **Yes** — file watcher (500ms debounce) AND `/dashboard/api/config/reload` |
 | `config.bak…` | same | automatic backup rotation (MAX_BACKUPS=5) on save; fallback on corruption | n/a |
 | `authorized_keys.yml` | YAML | app credentials (Argon2id hashes) + layered permissions | **Yes** — file watcher (500ms debounce) + `/perms/reload` |

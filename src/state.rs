@@ -44,6 +44,9 @@ pub struct AppState {
     pub sessions: DashMap<String, AdminSession>,
     /// /auth throttle per IP: ip -> (window_start_ms, count).
     pub auth_throttle: DashMap<String, (i64, u32)>,
+    /// Dashboard login throttle per IP (separate from /auth: env
+    /// MAX_LOGINS_PER_IP_PER_MINUTE, default 5).
+    pub dash_throttle: DashMap<String, (i64, u32)>,
 
     /// MongoDB client (lazy connect).
     pub mongo: Client,
@@ -65,6 +68,9 @@ pub struct AppState {
     pub admin_user: String,
     /// Max documents per insert batch (MAX_INSERT_BATCH env, default 1000).
     pub max_insert_batch: usize,
+    /// Dashboard login limit per IP per minute (env
+    /// MAX_LOGINS_PER_IP_PER_MINUTE, default 5).
+    pub dash_login_max_per_min: u32,
 }
 
 impl AppState {
@@ -79,6 +85,7 @@ impl AppState {
         perms_path: std::path::PathBuf,
         admin_user: String,
         max_insert_batch: usize,
+        dash_login_max_per_min: u32,
     ) -> Arc<Self> {
         Arc::new(Self {
             config: RwLock::new(config),
@@ -97,6 +104,7 @@ impl AppState {
             cursor_seq: AtomicU64::new(0),
             sessions: DashMap::new(),
             auth_throttle: DashMap::new(),
+            dash_throttle: DashMap::new(),
             mongo,
             started: Instant::now(),
             last_config_written: Mutex::new(None),
@@ -107,6 +115,7 @@ impl AppState {
             perms_path,
             admin_user,
             max_insert_batch,
+            dash_login_max_per_min,
         })
     }
 }

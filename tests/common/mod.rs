@@ -28,7 +28,8 @@
 //!
 //! JWTs + the admin cookie are cached in `<temp>/xdb_tb_cache/*.{jwt,cookie}`
 //! so a battery run performs ~0 Argon2id logins (every /auth costs ~5 s and
-//! /auth + dashboard login share a 30/min per-IP throttle — never login per
+//! /auth + dashboard login have SEPARATE per-IP throttles, 30/min and 5/min —
+//! never login per
 //! test). `jwt()` probes the cache with a cheap authed call and re-logs-in
 //! only when stale (401). JWT TTL is 90 min.
 //!
@@ -220,8 +221,8 @@ fn jwt_valid(jwt: &str) -> bool {
 }
 
 /// Fresh /auth call (no caching) — auth-flow tests only. Every call costs
-/// ~5 s of Argon2id server-side; /auth + dashboard login share a 30/min
-/// per-IP throttle. Use sparingly.
+/// ~5 s of Argon2id server-side; /auth + dashboard login have SEPARATE
+/// per-IP throttles (30/min and 5/min). Use sparingly.
 pub fn auth(agent: &ureq::Agent, identifier: &str, token: &str) -> (u16, Value) {
     post(
         agent,

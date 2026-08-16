@@ -8,10 +8,12 @@
   contains an **array** value — MongoDB's element-wise array sort cannot be
   represented in a keyset cursor; silent loss/loops would be worse. NaN/±Inf
   sort values ARE handled (NaN sorts first ascending on MongoDB 8).
-- `/auth` and dashboard login share the per-IP throttle. The throttle keys on
-  the peer socket IP — `X-Forwarded-For` is deliberately NOT trusted (no proxy
-  in the deployment; the header is client-controlled). Window is a fixed
-  wall-clock minute: up to 2× the limit can pass across a minute boundary.
+- `/auth` and dashboard login have SEPARATE per-IP throttles (dashboard
+  login: env `MAX_LOGINS_PER_IP_PER_MINUTE`, default 5; `/auth`:
+  `config.auth.max_per_minute_per_ip`, default 30). Both key on the peer
+  socket IP — `X-Forwarded-For` is deliberately NOT trusted (no proxy in the
+  deployment; the header is client-controlled). Window is a fixed wall-clock
+  minute: up to 2× the limit can pass across a minute boundary.
 - `/auth` + dashboard login: Argon2id verify runs on the tokio blocking pool
   (never on async workers); unknown apps/usernames verify against a fixed
   dummy PHC so response timing doesn't reveal whether an identity exists;

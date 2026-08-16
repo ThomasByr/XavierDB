@@ -446,6 +446,14 @@ async fn run(max_workers: usize) {
     if let Some(w) = cfg_warn {
         crate::state::log_line("WARN", &format!("[config] {w}"));
     }
+    // Dashboard login throttle is env-only: MAX_LOGINS_PER_IP_PER_MINUTE
+    // (default 5). The /auth throttle always comes from the config file
+    // (auth.max_per_minute_per_ip) — see auth.rs.
+    let dash_login_max_per_min: u32 = std::env::var("MAX_LOGINS_PER_IP_PER_MINUTE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5)
+        .clamp(1, 10_000);
     let perms_path = PathBuf::from(&config.global.permission_file);
     let perms = match std::fs::read_to_string(&perms_path) {
         Ok(text) => match PermissionsFile::parse(&text) {
@@ -530,6 +538,7 @@ async fn run(max_workers: usize) {
         perms_path,
         env_str("USERNAME", "admin"),
         max_insert_batch,
+        dash_login_max_per_min,
     );
 
     use tracing_subscriber::layer::{Layer, SubscriberExt};

@@ -40,8 +40,9 @@ Full contracts: examples.md.
 
 110 tests across 12 files (auth_flow, perms_matrix, meta_endpoints, crud_verbs,
 edge_data, query_filters, projection, pagination, dashboard_api, multi_app,
-watcher_reload, smoke). Every /auth costs ~5 s Argon2id and shares a 30/min
-per-IP throttle, so JWTs + the admin cookie are cached in `<temp>/xdb_tb_cache`
+watcher_reload, smoke). Every /auth costs ~5 s Argon2id; /auth and the
+dashboard login have SEPARATE per-IP throttles (config 30/min and env 5/min),
+so JWTs + the admin cookie are cached in `<temp>/xdb_tb_cache`
 and shared across all tests (~0 logins on a warm run; a stale cache
 auto-refreshes via probe → re-login).
 

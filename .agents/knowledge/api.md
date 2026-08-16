@@ -25,8 +25,9 @@ validation) map to 400; duplicate keys → 409.
 
 - `POST /dashboard/api/login` `{username, password}` → `{"ok":true}` + cookie
   `xdb_admin` (Path=/dashboard, HttpOnly, SameSite=Strict, Max-Age follows
-  `auth.session_ttl_hours`; +`; Secure` under TLS). Throttle SHARED with
-  client /auth (per-IP, default 30/min). Argon2id verify runs on the blocking
+  `auth.session_ttl_hours`; +`; Secure` under TLS). Throttle SEPARATE from
+  client /auth: per-IP, default 5/min from env `MAX_LOGINS_PER_IP_PER_MINUTE`
+  (dashboard login only). Argon2id verify runs on the blocking
   pool; unknown usernames verify against a fixed dummy hash (no timing
   oracle). Success/failure logged (info/warn).
 - `POST /dashboard/api/logout` / `GET /dashboard/api/session` →

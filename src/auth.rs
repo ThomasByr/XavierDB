@@ -181,21 +181,21 @@ pub fn check_admin_session(state: &AppState, token: &str) -> Result<String, ApiE
 }
 
 // ---------------------------------------------------------------------------
-// /auth brute-force throttle (fixed 1-minute window per IP)
+// Brute-force throttles (fixed 1-minute window per IP)
+//
+// Two SEPARATE throttles with separate limits:
+//   - /auth:            limit from the config file (auth.max_per_minute_per_ip)
+//   - dashboard login:  limit from env MAX_LOGINS_PER_IP_PER_MINUTE (default 5)
 // ---------------------------------------------------------------------------
 
-pub fn auth_throttled(state: &AppState, ip: &str) -> Result<(), ApiError> {
-    let max = state
-        .config
-        .read()
-        .map(|c| c.auth.max_per_minute_per_ip)
-        .unwrap_or(30);
+fn throttle_check(
+    map: &dashmap::DashMap<String, (i64, u32)>,
+    ip: &str,
+    max: u32,
+) -> Result<(), ApiError> {
     let now = crate::state::now_ms();
     let window = now / 60_000;
-    let mut entry = state
-        .auth_throttle
-        .entry(ip.to_string())
-        .or_insert((window, 0));
+    let mut entry = map.entry(ip.to_string()).or_insert((window, 0));
     if entry.0 != window {
         *entry = (window, 1);
         return Ok(());
@@ -210,11 +210,27 @@ pub fn auth_throttled(state: &AppState, ip: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// /auth throttle: limit always from the config file (dashboard-editable).
+pub fn auth_throttled(state: &AppState, ip: &str) -> Result<(), ApiError> {
+    let max = state
+        .config
+        .read()
+        .map(|c| c.auth.max_per_minute_per_ip)
+        .unwrap_or(30);
+    throttle_check(&state.auth_throttle, ip, max)
+}
+
+/// Dashboard login throttle: limit from env MAX_LOGINS_PER_IP_PER_MINUTE
+/// (default 5), its own counter — the /auth limit does NOT apply here.
+pub fn dash_throttled(state: &AppState, ip: &str) -> Result<(), ApiError> {
+    throttle_check(&state.dash_throttle, ip, state.dash_login_max_per_min)
+}
+
 pub fn throttle_sweep(state: &AppState) {
     let window = crate::state::now_ms() / 60_000;
-    state
-        .auth_throttle
-        .retain(|_, (w, _)| *w == window || *w + 2 >= window);
+    for map in [&state.auth_throttle, &state.dash_throttle] {
+        map.retain(|_, (w, _)| *w == window || *w + 2 >= window);
+    }
 }
 
 #[cfg(test)]

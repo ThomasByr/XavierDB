@@ -62,8 +62,11 @@ else.
 - **Each `/auth` takes ~5 seconds**: Argon2id (64 MiB, t=3, p=4) is verified
   for every login by design, to make brute force expensive. Showcases log in
   once or twice; expect a short wait.
-- **Login throttle**: `/auth` and the dashboard login share a per-IP limit
-  (default 30/min). Do not run many examples back to back inside one minute.
+- **Login throttle**: `/auth` and the dashboard login have SEPARATE per-IP
+  limits: `/auth` uses the config-file value (`auth.max_per_minute_per_ip`,
+  default 30/min); the dashboard login uses the
+  `MAX_LOGINS_PER_IP_PER_MINUTE` env var (default 5/min). Do not run many
+  examples back to back inside one minute.
 - **Seeding is idempotent**: showcases insert their demo documents with
   fixed `_id`s, so re-running them is safe (the duplicate-key 409 is
   expected and ignored).

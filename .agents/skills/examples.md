@@ -64,5 +64,6 @@ server-side (~5 s per setup run).
   equalization) — the errors showcase demonstrates this deliberately.
 - Seed idempotency trick used by all write showcases: fixed string _ids;
   duplicate 409 ignored.
-- Notes for users (examples/README.md): 5 s per /auth, 30/min shared
-  throttle, cleanup via `delete:true`.
+- Notes for users (examples/README.md): 5 s per /auth, separate per-IP
+  throttles (/auth: config 30/min; dashboard login: env 5/min), cleanup via
+  `delete:true`.

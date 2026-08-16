@@ -56,9 +56,11 @@ pub async fn login(
     JsonBody(body): JsonBody<LoginBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     // peer socket IP only — see routes_misc::auth_login (X-Forwarded-For is
-    // client-controlled and must not be trusted for throttling)
+    // client-controlled and must not be trusted for throttling). Dashboard
+    // login has its OWN throttle (env MAX_LOGINS_PER_IP_PER_MINUTE), separate
+    // from the /auth throttle (config file).
     let ip = addr.0.ip().to_string();
-    crate::auth::auth_throttled(&state, &ip)?;
+    crate::auth::dash_throttled(&state, &ip)?;
 
     let password_hash = std::env::var("PASSWORD_HASH").unwrap_or_default();
     let user_ok = body.username == state.admin_user && !password_hash.is_empty();

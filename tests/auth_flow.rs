@@ -1,7 +1,7 @@
 //! Auth-flow tests: the /auth contract, identical 401 shapes, malformed
 //! bodies, name auto-registration, cookie auth and invalid bearer tokens.
 //!
-//! Throttle budget: /auth + dashboard login share a 30/min per-IP throttle
+//! Throttle budget: /auth and dashboard login have SEPARATE per-IP throttles
 //! and every /auth costs ~5 s of Argon2id — this file performs at most 5
 //! fresh logins total (login_ok 1, wrong_token_and_unknown_app 3,
 //! new_name_auto_registers 1); everything else uses cached JWTs.

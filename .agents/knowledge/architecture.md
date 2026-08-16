@@ -20,6 +20,10 @@
   its own JWT (sub = exact name).
 - Dashboard sessions: in-memory DashMap (`xdb_admin` cookie, Path=/dashboard,
   TTL `config.auth.session_ttl_hours` default 24) — **restart = re-login**.
+- Login throttles: `/auth` and dashboard login have SEPARATE per-IP 1-minute
+  windows. `/auth` always uses `config.auth.max_per_minute_per_ip` (default
+  30, dashboard-editable); dashboard login uses env
+  `MAX_LOGINS_PER_IP_PER_MINUTE` (default 5, clamped 1..=10_000).
 
 ### Auth Q&A (verified from code — auth.rs, perms.rs)
 
