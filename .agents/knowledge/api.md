@@ -11,7 +11,7 @@
 | `PATCH /q/{db}/{coll}` | Bearer | upsert (200 updated / 201 inserted); array `data` = upsert-many (200) |
 | `DELETE /q/{db}/{coll}` | Bearer | `{filter}` → `{deleted_count}`, 404 if 0 |
 | `GET /ls` | Bearer | flat list of listable dbs; `?db=X` → collections |
-| `GET /health` | public | health doc; 200 ok / 503 otherwise |
+| `GET /health` | public | health doc (+ `constants.max_insert_batch`, `constants.jwt_token_lifetime_seconds`, `constants.max_document_limit`); 200 ok / 503 otherwise |
 
 Errors: `{error, code, status}`; codes BAD_REQUEST/INVALID_FILTER/INVALID_SORT/
 INVALID_LIMIT/INVALID_CURSOR (400), UNAUTHORIZED (401), FORBIDDEN/BLOCKED (403),
