@@ -257,6 +257,17 @@ table.data tr:hover td { background: var(--surface-2); }
 .stat .stat-sub { font-size: 11px; color: var(--on-surface-variant); margin-top: 2px; }
 .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
 
+/* overview: blocked-apps alert strip */
+.ov-alert {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: rgba(179,38,30,.08); border: 1px solid rgba(179,38,30,.35);
+  border-radius: var(--radius); padding: 10px 14px; margin-bottom: 14px;
+  color: var(--error); font-size: 13px;
+}
+
+/* overview: extra breathing room between the system charts and app traffic */
+#ov-traffic { margin-top: 22px; }
+
 /* mini single-line charts */
 .chart-grid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .chart-card {

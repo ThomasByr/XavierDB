@@ -284,6 +284,7 @@ let chartEls: Record<string, { value: HTMLElement; canvas: HTMLCanvasElement; su
 function renderOverview() {
   const v = $("#view");
   v.innerHTML = "";
+  v.append(el("div", { class: "ov-alert hidden", id: "ov-alert" }));
   v.append(el("div", { class: "stats-row", id: "ov-chips" }));
   v.append(el("div", { class: "grid chart-grid", id: "ov-charts" }));
   chartEls = {};
@@ -300,6 +301,13 @@ function renderOverview() {
     grid.append(card);
     chartEls[d.key] = { value, canvas, sub };
   }
+  v.append(el("div", { class: "card", id: "ov-traffic" }, [
+    el("h3", {}, [
+      "App traffic",
+      el("span", { class: "muted", id: "ov-traffic-summary", style: "margin-left:auto;font-weight:400" }),
+    ]),
+    el("div", { id: "ov-traffic-body" }),
+  ]));
   if (lastMetrics) renderOverviewData(lastMetrics);
 }
 
@@ -338,6 +346,76 @@ function renderOverviewData(m: Metrics) {
     drawMini(c.canvas, smooth(d.key, d.raw(s)), getCss(d.color));
   }
   updateMongoStatus(m.health);
+  renderOvAlert(m);
+  renderOvTraffic(m);
+}
+
+/* blocked-apps alert strip — shown only while at least one app is blocked */
+function renderOvAlert(m: Metrics) {
+  const alert = $("#ov-alert");
+  if (!alert) return;
+  const blocked = m.apps.filter((a) => a.blocked);
+  alert.classList.toggle("hidden", blocked.length === 0);
+  alert.textContent = "";
+  if (!blocked.length) return;
+  alert.append(el("span", { style: "font-weight:600" }, ["Blocked apps"]));
+  for (const a of blocked) {
+    alert.append(el("span", { class: "badge bad", title: `${esc(a.app)} — every request returns 403 BLOCKED` }, [esc(a.app)]));
+  }
+}
+
+/* top apps by RPS + lifetime aggregate — rebuilt each poll like the limits table */
+const OV_TOP_APPS = 6;
+
+function renderOvTraffic(m: Metrics) {
+  const body = $("#ov-traffic-body");
+  if (!body) return;
+  const summary = $("#ov-traffic-summary");
+  const active = m.apps.filter((a) => a.rps > 0).sort((x, y) => y.rps - x.rps);
+  const top = active.slice(0, OV_TOP_APPS);
+  const sumRps = active.reduce((s, a) => s + a.rps, 0);
+  const worstP50 = active.reduce((s, a) => Math.max(s, a.p50_ms), 0);
+  const lifetime = m.health?.app?.total_requests ?? 0;
+  if (summary) {
+    summary.textContent = active.length === 0
+      ? "no traffic yet"
+      : `${active.length} active · ${fmtNum(sumRps, 1)} rps total · worst p50 ${fmtNum(worstP50, 1)}ms · ${fmtNum(lifetime, 0)} requests lifetime`;
+  }
+  body.textContent = "";
+  if (top.length === 0) {
+    body.append(el("div", { class: "empty-note" }, ["no app traffic yet — apps appear here once they send requests"]));
+    return;
+  }
+  const t = el("table", { class: "data table-sm" });
+  t.innerHTML = "<thead><tr><th>app</th><th>weight</th><th>trend</th><th>rps</th><th>p50</th><th>limit</th><th>status</th></tr></thead>";
+  const tb = el("tbody");
+  const rows = top.map((a) => ovTrafficRow(a));
+  for (const r of rows) tb.append(r.tr);
+  t.append(tb);
+  body.append(t);
+  // draw only once the canvases are laid out — clientWidth is 0 before attachment
+  top.forEach((a, i) => sparkline(rows[i].canvas, a.rps_history, getCss("--primary")));
+  if (active.length > top.length) {
+    body.append(el("div", { class: "muted", style: "margin-top:6px" }, [`… and ${active.length - top.length} more app(s)`]));
+  }
+}
+
+function ovTrafficRow(a: AppNode): { tr: HTMLTableRowElement; canvas: HTMLCanvasElement } {
+  const tr = el("tr");
+  const name = el("td");
+  name.append(el("b", {}, [esc(a.app)]));
+  if (a.blocked) name.append(el("span", { class: "badge bad", style: "margin-left:6px" }, ["BLOCKED"]));
+  tr.append(name);
+  tr.append(el("td", { class: "tnum" }, ["×" + (a.weight ?? 1).toFixed(1)]));
+  const cv = el("canvas", { class: "sparkline", width: "70", height: "22", style: "width:70px;height:22px" }) as HTMLCanvasElement;
+  const trend = el("td");
+  trend.append(cv);
+  tr.append(trend);
+  tr.append(el("td", { class: "tnum" }, [fmtNum(a.rps, 1)]));
+  tr.append(el("td", { class: "tnum" }, [fmtNum(a.p50_ms, 1)]));
+  tr.append(el("td", { class: "tnum" }, [String(a.limit ?? "—")]));
+  tr.append(el("td", {}, [el("span", { class: "badge " + (a.blocked ? "bad" : "ok") }, [a.blocked ? "BLOCKED" : "active"])]));
+  return { tr, canvas: cv };
 }
 
 function getCss(v: string): string {
