@@ -65,7 +65,9 @@ fn load_env() {
             crate::state::log_stdout("INFO", "[env] created .env from .env.example");
         }
     }
-    if let Err(e) = dotenvy::from_path(".env") {
+    // override: .env wins over OS-provided variables (e.g. USERNAME is always
+    // set by Windows to the login name and would otherwise shadow the .env value)
+    if let Err(e) = dotenvy::from_path_override(".env") {
         crate::state::log_line("WARN", &format!("[env] dotenv error: {e}"));
     }
 }

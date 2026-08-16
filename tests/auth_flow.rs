@@ -20,7 +20,13 @@ fn login_ok() {
     assert!(body["token"].as_str().is_some(), "token present: {body}");
     assert_eq!(body["token_type"], "Bearer");
     assert!(body["expires_in"].is_number());
-    assert_eq!(body["expires_in"], 5400);
+    // the JWT lifetime is configurable (config.global.jwt_token_lifetime_minutes) —
+    // assert against the effective value published in the public /health document
+    let (_, h) = health(&agent);
+    let expected = h["constants"]["jwt_token_lifetime_seconds"]
+        .as_u64()
+        .expect("constants.jwt_token_lifetime_seconds in /health");
+    assert_eq!(body["expires_in"], expected, "expires_in must match the config lifetime");
     assert_eq!(body["identifier"], "tester@xdb_tb_main");
 }
 

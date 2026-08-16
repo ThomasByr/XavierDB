@@ -22,8 +22,21 @@ pub struct HealthDoc {
     pub qps: f64,
     /// Insert-batch cap (MAX_INSERT_BATCH env) — static per process.
     pub max_insert_batch: usize,
+    /// Process/effective-config constants for clients and the test battery.
+    pub constants: HealthConstants,
     pub app: AppHealth,
     pub mongodb: MongoHealth,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HealthConstants {
+    /// Insert-batch cap (MAX_INSERT_BATCH env) — static per process.
+    pub max_insert_batch: usize,
+    /// JWT lifetime in seconds (config.global.jwt_token_lifetime_minutes × 60).
+    pub jwt_token_lifetime_seconds: u64,
+    /// Adaptive-limit ceiling (config.rate_limit.max_limit) — the enforced
+    /// per-app document cap never exceeds this.
+    pub max_document_limit: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -85,6 +98,18 @@ pub async fn refresh_health(state: &Arc<AppState>) -> HealthDoc {
         .map(|c| c.health.cache_ttl_seconds.max(1))
         .unwrap_or(5);
 
+    let jwt_lifetime_seconds = state
+        .config
+        .read()
+        .map(|c| c.global.jwt_token_lifetime_minutes.saturating_mul(60))
+        .unwrap_or(5400);
+
+    let max_document_limit = state
+        .config
+        .read()
+        .map(|c| c.rate_limit.max_limit)
+        .unwrap_or(200);
+
     HealthDoc {
         status: status.to_string(),
         checked_at_ms: crate::state::now_ms(),
@@ -92,6 +117,11 @@ pub async fn refresh_health(state: &Arc<AppState>) -> HealthDoc {
         compute_latency_ms: p50,
         qps,
         max_insert_batch: state.max_insert_batch,
+        constants: HealthConstants {
+            max_insert_batch: state.max_insert_batch,
+            jwt_token_lifetime_seconds: jwt_lifetime_seconds,
+            max_document_limit,
+        },
         app: AppHealth {
             status: status.to_string(),
             uptime_s: state.started.elapsed().as_secs(),
