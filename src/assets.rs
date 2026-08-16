@@ -6,13 +6,14 @@ use axum::response::{IntoResponse, Response};
 const INDEX: &str = include_str!("assets/index.html");
 const STYLES: &str = include_str!("assets/styles.css");
 const APP_JS: &str = include_str!("assets/app.js");
-const FAVICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#6d4aff"/><path d="M7 12h10M12 7v10" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg>"##;
+const FAVICON: &[u8] = include_bytes!("assets/logo.png");
 
 fn headers_for(ext: &str) -> HeaderMap {
     let mut h = HeaderMap::new();
     let ct = match ext {
         "css" => "text/css; charset=utf-8",
         "js" => "text/javascript; charset=utf-8",
+        "png" => "image/png",
         "svg" => "image/svg+xml",
         _ => "text/html; charset=utf-8",
     };
@@ -29,7 +30,7 @@ pub async fn dashboard_assets(axum::extract::Path(rest): axum::extract::Path<Str
     match rest.as_str() {
         "styles.css" => (headers_for("css"), STYLES).into_response(),
         "app.js" => (headers_for("js"), APP_JS).into_response(),
-        "favicon.svg" => (headers_for("svg"), FAVICON).into_response(),
+        "logo.png" => (headers_for("png"), FAVICON).into_response(),
         _ => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
 }

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>XavierDB · Dashboard</title>
-<link rel="icon" href="/dashboard/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/dashboard/logo.png" type="image/png">
 <link rel="stylesheet" href="/dashboard/styles.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
 <div id="login-view" class="login-view hidden">
   <div class="login-card elevation-1">
     <div class="login-logo" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="currentColor" opacity="0.9"/><path d="M7 12h10M12 7v10" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg>
+      <img src="/dashboard/logo.png" alt="">
     </div>
     <h1 class="login-title">XavierDB</h1>
     <p class="login-subtitle">Admin dashboard</p>
@@ -33,6 +33,7 @@
 <div id="app" class="app hidden">
   <header class="topbar elevation-0">
     <button id="nav-toggle" class="icon-btn" aria-label="Toggle navigation">&#9776;</button>
+    <img id="topbar-logo" src="/dashboard/logo.png" alt="">
     <div class="topbar-title">XavierDB <span id="page-title" class="topbar-page"></span></div>
     <div class="topbar-actions">
       <span id="mongo-dot" class="dot" title="MongoDB status"></span>

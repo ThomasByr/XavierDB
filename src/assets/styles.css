@@ -100,7 +100,7 @@ body {
   width: 340px; padding: 32px 28px; border-radius: var(--radius-lg);
   background: var(--surface-1); text-align: center;
 }
-.login-logo svg { width: 56px; height: 56px; color: var(--primary); }
+.login-logo img { width: 56px; height: 56px; object-fit: contain; }
 .login-title { font-size: 22px; font-weight: 500; margin-top: 8px; }
 .login-subtitle { color: var(--on-surface-variant); margin: 4px 0 24px; }
 .login-error { color: var(--error); min-height: 18px; margin-top: 12px; font-size: 13px; }
@@ -113,6 +113,7 @@ body {
   position: relative; z-index: 5;
 }
 .topbar-title { font-size: 20px; font-weight: 500; flex: 1; display: flex; align-items: baseline; gap: 10px; }
+#topbar-logo { width: 28px; height: 28px; object-fit: contain; }
 .topbar-page { font-size: 14px; font-weight: 400; color: var(--on-surface-variant); }
 .topbar-actions { display: flex; align-items: center; gap: 8px; }
 .body { display: flex; flex: 1; overflow: hidden; }
