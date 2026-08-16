@@ -3,6 +3,7 @@
 //! Black-box HTTP tests against a RUNNING server + MongoDB. Requirements and
 //! the run ritual are documented in `.agents/skills/build-run-test.md`; the
 //! fixture world below is created by the bootstrap script.
+#![allow(dead_code)] // shared fixture: each test binary uses only a subset
 //!
 //! # Fixture world (pre-created, idempotent)
 //!
