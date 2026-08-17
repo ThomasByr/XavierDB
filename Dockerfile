@@ -24,11 +24,13 @@ WORKDIR /build
 
 # Stage 1: dummy build to cache dependencies
 # Note: COPY Cargo.lock to ensure reproducible dependency resolution
+# Purge the crate artifact from shared target cache (before rm src)
 COPY Cargo.toml Cargo.lock ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,id=xavier-target,target=/build/target \
     mkdir src && echo 'fn main() {}' > src/main.rs \
     && cargo build --release \
+    && cargo clean -p XavierDB --release \
     && rm -rf src
 
 # Stage 2: real build with incremental compilation
