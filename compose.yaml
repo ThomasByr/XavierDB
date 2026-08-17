@@ -9,7 +9,10 @@ services:
     ports:
       - "127.0.0.1:27017:27017"                     # bind only to localhost
     volumes:
-      - "${HOME}/data/xavier-mongo-db:/data/db"     # persistent data directory
+      # Persistent data directory
+      - "${HOME}/data/xavier-mongo-db:/data/db"     # keep only one of the following two
+      # - xavier_mongo_db:/data/db                  # uncomment the named volume at the end
+      # Configuration
       - xavier_configdb:/data/configdb
     deploy:
       resources:
@@ -92,4 +95,4 @@ services:
 
 volumes:
   xavier_mongo_db:
-  xavier_configdb:
+  # xavier_configdb:                               # uncomment if you don't use a persistent data directory
