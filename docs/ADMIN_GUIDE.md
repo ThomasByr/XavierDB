@@ -7,11 +7,11 @@ hash-routed views: `#/overview`, `#/clients`, `#/config`, `#/logs`.
 
 ## First login
 
-- Username: `USERNAME` from `.env` (default `admin`).
-- Password: if `PASSWORD_HASH` is empty, the server **generates a strong
+- Username: `admin.username` from `server.yml` (default `admin`).
+- Password: if `admin.password_hash` is empty, the server **generates a strong
   64-character password on startup, prints it once in the terminal** and
-  stores only its Argon2id hash in `.env`. Change it by editing `.env`
-  (put the PHC hash in single quotes) and restarting.
+  stores only its Argon2id hash in `server.yml`. Change it by editing
+  `server.yml` (`$` needs no quoting in YAML) and restarting.
 
 Sessions are in-memory and last `auth.session_ttl_hours` (default 24 h);
 a restart logs everyone out. Login attempts are throttled per IP
@@ -126,13 +126,13 @@ Notes:
 
 | symptom | cause / fix |
 |---|---|
-| dashboard login fails | wrong `USERNAME`/`PASSWORD_HASH` in `.env`; the hash must be single-quoted (it contains `$`) |
+| dashboard login fails | wrong `admin.username`/`admin.password_hash` in `server.yml` |
 | dashboard requires login again after a restart | sessions are in-memory — just log in |
 | `/auth` says 401 with a correct token | the app has no `token_hash` yet → set it in Clients; or the token was just rotated |
 | `403 BLOCKED` | the name or app is blocked → Clients page, unblock |
 | `403 FORBIDDEN` | the identity lacks that action on that db/coll → Clients page, permissions |
 | `/health` is `503` | MongoDB unreachable or degraded; the body explains which |
-| JWT stops working after restart | no `JWT_SECRET` in `.env` → set one to keep tokens stable |
+| JWT stops working after restart | no `auth.jwt_secret` in `server.yml` → set one to keep tokens stable |
 | config file corrupted | the server falls back to `config.bak` automatically |
 | dashboard feels slow | lower `poll_seconds` (Config) — or raise it to save resources |
 | permission edits lost their comments | the dashboard rewrites `authorized_keys.yml`; keep comments elsewhere |
