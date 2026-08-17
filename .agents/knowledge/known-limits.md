@@ -87,11 +87,11 @@
 
 ## Deferred work
 
-- **Docker build speed — pending (2026-08-17).** Two safe fixes identified
-  and measured (context exclusions in .dockerignore; copy Cargo.lock into the
-  dummy-main layer) plus one dangerous pattern to avoid (target-dir cache
-  mount leaks the dummy binary). Reverted, not applied — details:
-  skills/docker.md "Build speed" section.
+- **Docker build speed — DONE (2026-08-17, applied + verified).** Context
+  exclusions in .dockerignore, Cargo.lock in the dummy layer, shared
+  registry/target cache mounts; the target-cache dummy-binary trap is fixed
+  via `cargo clean -p XavierDB --release` in the dummy step. Src-only
+  rebuild ≈ 13 s. Details + traps: skills/docker.md "Build speed" section.
 - **Performance verification — deferred (2026-08-11, user decision).** No
   perf work in the 3 review rounds (correctness/security/contracts only).
   No benchmarks, no profiling, no load tests in the repo. Natural first steps

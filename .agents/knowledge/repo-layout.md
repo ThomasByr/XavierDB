@@ -14,7 +14,7 @@ XavierDB/
 │   └── CONFIGURATION.md         #   config file fields, adaptive-limit formula, perms format
 ├── compose.yaml                 # 2 services: xavierdb (MongoDB) + api; api mounts repo over /app
 ├── Dockerfile                   # node stage (esbuild) + single-stage rust:1-slim-bookworm build/run
-├── .dockerignore                # excludes server.yml/.env/config/config.bak*/authorized_keys.yml/target/node_modules/.git/.pi
+├── .dockerignore                # full exclusions (dirs, state files, *.md/*.swp/*.tmp) — see skills/docker.md
 ├── .gitignore                   # /target, .env, server.yml, authorized_keys.yml, config, config.bak*, node_modules/
 ├── .github/workflows/            # CI/CD
 │   └── deploy-site.yml           #   VitePress site -> GitHub Pages (xavierdb.fr) on web/** changes
@@ -70,8 +70,11 @@ XavierDB/
 
 ## What the image vs. the repo contains (Docker)
 
-`.dockerignore` excludes `server.yml`, `.env`, `config`, `config.bak*`, `authorized_keys.yml`
-from the build context. `COPY . .` (build stage) lands in `/build`; the
+`.dockerignore` (full list in the file) excludes dirs (`target`,
+`node_modules`, `examples/`, `web/`, `.agents/`…), state files (`server.yml`
+— exact name only, `server.yml.example` MUST stay: include_str! needs it —,
+`.env*`, `config`, `config.bak*`, `authorized_keys.yml*`) and `*.md` from
+the build context. `COPY . .` (build stage) lands in `/build`; the
 runtime stage's `/app` workdir is empty until compose mounts the repo root
 over it (`.:/app`), so the repo files ARE the container's state files: the
 container reads/writes the same `server.yml`/`config`/`config.bak`/`authorized_keys.yml` as

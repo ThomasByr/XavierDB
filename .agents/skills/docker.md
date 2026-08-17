@@ -4,7 +4,11 @@ First real run: `docker compose up --build -d` worked end to end on the dev
 machine (Docker Desktop 29.7.2, WSL2 backend, overlayfs). The integration
 battery (local rust, `cargo test`) against the docker stack is 108/110 —
 the 2 watcher_reload failures are a Docker-Desktop-only limitation, see
-"inotify / file watchers" below.
+"inotify / file watchers" below. Re-verified 2026-08-17 against the
+rebuilt image (post build-speed fixes + dummy-binary fix): same 108/110.
+Note for running the battery: on Windows the PATH `bash` is a broken WSL
+stub — invoke git-bash explicitly for tests/bootstrap.sh
+(`& "C:\Program Files\Git\bin\bash.exe" tests/bootstrap.sh ...`).
 
 ## Ops commands
 
@@ -63,56 +67,70 @@ watcher (virtiofsd implements no FUSE notify). Consequences:
   `docker compose restart api`, or use the `/perms/reload` +
   `/config/reload` endpoints (relay works in docker).
 
-## Dockerfile facts (verified)
+## Dockerfile facts (verified 2026-08-17, after the build-speed fixes)
 
 - Stage 1 node:22-bookworm-slim: `npm ci` (lockfile), `npm run build`
   (esbuild ts/app.ts → src/assets/app.js — the only generated asset;
   index.html/styles.css are static, come from the context).
 - Stage 2 rust:1-slim-bookworm: apt install cmake perl pkg-config
   (aws-lc-sys needs them; gcc+libc6-dev already in the image) + curl
-  ca-certificates (healthcheck); dummy-main layer-cache trick; `COPY . .`
-  then overlay app.js from the node stage; binary → /usr/local/bin/XavierDB;
-  WORKDIR /app; CMD ["XavierDB"]. Full build incl. aws-lc-sys verified
-  (~4 min cold on the dev machine).
-- Single-stage (runtime = rust image, ~1.5–2 GB) per user constraint.
+  ca-certificates (healthcheck); dummy-main layer copies `Cargo.toml
+  Cargo.lock` (the lockfile is REQUIRED — without it the dummy resolves
+  "latest" and the real build recompiles ~30 crates); both cargo steps use
+  `--mount=type=cache` for `/usr/local/cargo/registry` (downloads) AND a
+  shared `id=xavier-target` target cache; `COPY . .` then overlay app.js
+  from the node stage; binary → /usr/local/bin/XavierDB;
+  WORKDIR /app; CMD ["XavierDB"].
 - include_str! needs src/assets/{index.html,styles.css,app.js} + server.yml.example
-  in the build context at compile time.
+  in the build context at compile time. TRAP: a `server.yml*` pattern in
+  .dockerignore matches `server.yml.example` too → real build fails; the
+  pattern must be the exact name `server.yml` (fixed 2026-08-17; was masked
+  before because the dummy-binary bug meant the real crate never compiled).
 - Image NEVER contains state files (.dockerignore + COPY lands in image
   root /; /app is empty in the image) — see knowledge/repo-layout.md.
 
-## Build speed — findings & pending fixes (2026-08-17, verified, NOT applied)
+## Build speed — fixes APPLIED & VERIFIED 2026-08-17
 
-Measured during the 2026-08-17 build-speed session (Docker Desktop 29.7.2).
-All three were reverted per user decision (commit happened with the
-original Dockerfile); re-apply when build speed work resumes.
+Fast-rebuild pipeline verified end to end (Docker Desktop 29.7.2): no-op
+rebuild ~2 s; src-only rebuild ≈ 13 s (only the app crate recompiles, deps
+come from the target cache mount); image binary is the REAL one
+(19.6 MB) and `docker compose up -d` starts healthy with normal logs.
 
-1. **Build context is ~1.6 GB, most of it leaked `examples/target`**
-   (1.46 GB). `.dockerignore`'s bare `target` pattern only matches the ROOT
-   directory — nested ones need `**/target`. `web/.vitepress/dist` +
-   `web/.vitepress/cache` (~20 MB) leaked too. Measured with exclusions:
-   context transfer 1.63 GB/103 s → 4.6 kB/0 s on every build.
-   Fix (safe): add `**/target`, `**/node_modules`, `web/.vitepress/dist`,
-   `web/.vitepress/cache` to `.dockerignore`.
+1. **Build context is now ~5 kB** — the full `.dockerignore` excludes
+   `.agents/ .github/ .git/ .idea/ .pi/ .vscode/ assets/ docs/ examples/
+   node_modules/ target/ tests/ web/` plus dotfiles/state/log files and
+   `*.md *.swp *.tmp` (the old bare `target` pattern only matched the ROOT
+   directory; `examples/target` alone was 1.46 GB of the 1.6 GB context).
 
-2. **Dependencies are compiled TWICE per build.** The dummy-main layer does
-   `COPY Cargo.toml ./` WITHOUT `Cargo.lock`, so it resolves fresh "latest"
-   versions; the real build then sees the repo's `Cargo.lock` (different
-   versions) and recompiles ~30 crates from scratch — including aws-lc-sys
-   (~35 s). With `COPY Cargo.toml Cargo.lock ./` the dummy build compiles the
-   exact locked versions and the real step only compiles the app crate
-   (~10 s instead of ~100 s). Fix (safe): copy the lockfile in the dummy
-   layer.
+2. **Dependencies compile once, not twice** — the dummy layer copies
+   `Cargo.lock` along with `Cargo.toml` (see Dockerfile facts above), and
+   both cargo steps share the `xavier-target` cache mount + a
+   `/usr/local/cargo/registry` cache mount.
 
-3. **PITFALL — never `--mount=type=cache,target=/build/target` on the build
-   steps.** A target-dir cache mount SHADOWS the dummy-main layer's compiled
-   deps and shares state between the dummy and real steps; the dummy step
-   leaves a ~400 KB `fn main(){}` binary in the cache and cargo can consider
-   the bin fresh in the real step → `cp target/release/XavierDB` copies the
-   DUMMY into the image → the container exits 0 silently (crash loop, no
-   logs; observed live: image binary 437 KB). A cache mount for
-   `/usr/local/cargo/registry` ONLY (downloads) is safe and helps cold
-   rebuilds.
+3. **CRITICAL TRAP with the shared target cache mount (fixed, keep the
+   fix):** the dummy step leaves `target/release/XavierDB` (the 437 KB
+   `fn main() {}` stub) in the cache mount, with a NEWER mtime than the
+   `COPY . .` sources (COPY preserves context mtimes). Cargo then sees a
+   "fresh" bin in the real step, skips compiling, and `cp` ships the DUMMY
+   → container exits 0 instantly, empty logs, restart loop (observed live
+   twice on 2026-08-17). Fix (VERIFIED): end the dummy step with
+   `cargo clean -p XavierDB --release` to purge ONLY this crate's
+   artifacts (deps stay cached) — it MUST run BEFORE `rm -rf src`
+   (cargo clean -p needs src/ to resolve the package; reversed it exits
+   101 and the build fails). If a rebuild finishes suspiciously fast and
+   the container crash-loops with no logs, check
+   `docker run --rm --entrypoint ls <img> -la /usr/local/bin/XavierDB`:
+   ~437 KB = dummy, ~19.6 MB = real.
 
-Baseline for comparison: no-op rebuild ~2 s (all layers cached), src-only
-rebuild with the current (reverted) Dockerfile ≈ 2–4 min (mostly context
-transfer + the double compile from #1/#2).
+## deploy.sh & compose.override.yaml (2026-08-17)
+
+- `deploy.sh` (repo root, for the Linux prod host): `set -euo pipefail`,
+  `git pull origin main` → `docker compose -f compose.yaml build api` →
+  `docker compose -f compose.yaml up -d`. Because it passes `-f
+  compose.yaml`, compose does NOT auto-merge `compose.override.yaml`
+  (the override is only picked up when compose is invoked WITHOUT `-f`)
+  — so prod never sees the dev override.
+- `compose.override.yaml` (dev-only, committed but NOT verified): disables
+  `develop.watch`, mounts `cargo-cache` + `target-cache` volumes, replaces
+  the command with `cargo watch -x 'run --release'`, tightens the
+  healthcheck to 5s. Treat as experimental — verify before relying on it.
