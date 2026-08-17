@@ -14,15 +14,15 @@ target/
 tests/
 web/
 
-.env*
+.env
 .gitignore
 .release-it.json
-authorized_keys.yml*
+authorized_keys.yml
 cliff.toml
 config
 config.bak*
 deploy.sh
-server.yml*
+server.yml
 xavierdb.log*
 
 *.md
