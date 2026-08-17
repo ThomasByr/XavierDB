@@ -94,5 +94,5 @@ services:
           path: ./src
 
 volumes:
-  xavier_mongo_db:
-  # xavier_configdb:                               # uncomment if you don't use a persistent data directory
+  # xavier_mongo_db:                               # uncomment if you don't use a persistent data directory
+  xavier_configdb:
