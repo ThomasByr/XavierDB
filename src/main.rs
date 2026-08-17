@@ -18,6 +18,7 @@ mod perms;
 mod routes_admin;
 mod routes_misc;
 mod routes_q;
+mod settings;
 mod state;
 mod tls;
 
@@ -32,114 +33,12 @@ use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 
 use crate::perms::PermissionsFile;
+use crate::settings::ServerSettings;
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
-// env helpers
+// background task supervisor
 // ---------------------------------------------------------------------------
-
-fn env_str(key: &str, default: &str) -> String {
-    // empty counts as unset (USERNAME=/PORT= must not reach the app)
-    std::env::var(key)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| default.to_string())
-}
-
-fn env_path(key: &str) -> Option<PathBuf> {
-    let v = std::env::var(key).ok()?;
-    let v = v.trim().to_string();
-    if v.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(v))
-}
-
-/// Load .env from the working directory; create a default one when missing.
-fn load_env() {
-    if !std::path::Path::new(".env").exists() {
-        let template = include_str!("../.env.example");
-        if let Err(e) = std::fs::write(".env", template) {
-            crate::state::log_line("ERROR", &format!("[env] could not create .env: {e}"));
-        } else {
-            crate::state::log_stdout("INFO", "[env] created .env from .env.example");
-        }
-    }
-    // override: .env wins over OS-provided variables (e.g. USERNAME is always
-    // set by Windows to the login name and would otherwise shadow the .env value)
-    if let Err(e) = dotenvy::from_path_override(".env") {
-        crate::state::log_line("WARN", &format!("[env] dotenv error: {e}"));
-    }
-}
-
-/// Bootstrap the admin password: when PASSWORD_HASH is blank or unparseable,
-/// generate a strong password, hash it with Argon2id and write the hash back
-/// into .env. The plaintext is printed to the terminal exactly once.
-fn bootstrap_admin_password() {
-    let hash = std::env::var("PASSWORD_HASH").unwrap_or_default();
-    let valid = !hash.is_empty() && argon2::password_hash::PasswordHash::new(&hash).is_ok();
-    if valid {
-        return;
-    }
-    use rand::RngCore;
-    const ALPHABET: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~!@#$%^&*";
-    let mut bytes = [0u8; 64];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    let password: String = bytes
-        .iter()
-        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
-        .collect();
-    let phc = match auth::hash_credential(&password) {
-        Ok(h) => h,
-        Err(e) => {
-            crate::state::log_line("ERROR", &format!("[admin] could not hash password: {e}"));
-            return;
-        }
-    };
-    let path = ".env";
-    let content = std::fs::read_to_string(path).unwrap_or_default();
-    let mut found = false;
-    // NOTE: the hash contains '$' signs; dotenvy would treat them as variable
-    // references, so the value MUST be single-quoted (strong quotes).
-    let quoted = format!("PASSWORD_HASH='{phc}'");
-    let out: String = content
-        .lines()
-        .map(|line| {
-            if line.split_once('=').map(|(k, _)| k.trim()) == Some("PASSWORD_HASH") {
-                found = true;
-                quoted.clone()
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let out = if found {
-        out
-    } else {
-        format!("{out}\n{quoted}\n")
-    };
-    if let Err(e) = std::fs::write(path, out) {
-        eprintln!("[admin] could not write .env: {e}");
-        return;
-    }
-    // SAFETY: called from main() before the tokio runtime is built, so no
-    // other thread exists yet.
-    unsafe { std::env::set_var("PASSWORD_HASH", &phc) };
-    crate::state::log_stdout("INFO", "================================================================");
-    crate::state::log_stdout("INFO", "[admin] generated a new dashboard password (shown ONCE):");
-    crate::state::log_stdout("INFO", &format!("    {password}"));
-    crate::state::log_stdout(
-        "INFO",
-        &format!(
-            "username : {}",
-            std::env::var("USERNAME").unwrap_or_else(|_| "admin".into())
-        ),
-    );
-    crate::state::log_stdout("INFO", "(stored in .env as PASSWORD_HASH — you can change it there)");
-    crate::state::log_stdout("INFO", "================================================================");
-}
 
 /// Spawn a background loop task that restarts itself whenever it exits
 /// (panic or early return).
@@ -397,50 +296,42 @@ fn main() {
     // in the tree via jsonwebtoken's rust_crypto feature)
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    load_env();
+    // server settings (server.yml + env overrides), bootstrap the file on first boot
+    let mut settings = settings::load();
     // rotating log files on disk (Logs tab reads from them; settings are
-    // env-only per design — LOG_FILES / LOG_SIZE_MB, defaults 5 files × 10 MB)
-    let log_files = std::env::var("LOG_FILES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5)
-        .clamp(1, 10);
-    let log_size_mb = std::env::var("LOG_SIZE_MB")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(10)
-        .clamp(1, 20);
-    crate::state::init_log_files(log_files, log_size_mb);
-    // must run before the tokio runtime exists (it uses unsafe set_var)
-    bootstrap_admin_password();
+    // startup-only per design — log.files / log.size_mb, defaults 5 × 10 MB)
+    crate::state::init_log_files(settings.log.files, settings.log.size_mb);
+    // runs before the tokio runtime exists (writes back into server.yml)
+    if let Some(password) = settings.bootstrap_admin_password() {
+        crate::state::log_stdout("INFO", "================================================================");
+        crate::state::log_stdout("INFO", "[admin] generated a new dashboard password (shown ONCE):");
+        crate::state::log_stdout("INFO", &format!("    {password}"));
+        crate::state::log_stdout(
+            "INFO",
+            &format!("username : {}", settings.admin.username),
+        );
+        crate::state::log_stdout(
+            "INFO",
+            "(stored in server.yml as admin.password_hash — you can change it there)",
+        );
+        crate::state::log_stdout("INFO", "================================================================");
+    }
 
-    let max_workers: usize = std::env::var("MAX_WORKERS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0 && *n <= 512) // tokio panics above 512 workers
-        .unwrap_or(4);
+    let max_workers = settings.runtime.max_workers;
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(max_workers)
         .enable_all()
         .build()
         .expect("failed to build tokio runtime");
-    rt.block_on(run(max_workers));
+    rt.block_on(run(max_workers, settings));
 }
 
-async fn run(max_workers: usize) {
-    let host = env_str("HOST", "127.0.0.1");
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .filter(|p| *p > 0) // PORT=0 would bind an ephemeral port silently
-        .unwrap_or(8000);
-    let max_insert_batch: usize = std::env::var("MAX_INSERT_BATCH")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0) // 0/garbage would reject every batch — fall back
-        .unwrap_or(crate::routes_q::MAX_INSERT_BATCH);
-    let mongodb_uri = env_str("MONGODB_URI", "mongodb://localhost:27017");
+async fn run(max_workers: usize, settings: ServerSettings) {
+    let host = settings.network.host.clone();
+    let port = settings.network.port;
+    let max_insert_batch = settings.runtime.max_insert_batch;
+    let mongodb_uri = settings.network.mongodb_uri.clone();
 
     // --- config + perms ---
     let config_path = PathBuf::from("config");
@@ -448,14 +339,10 @@ async fn run(max_workers: usize) {
     if let Some(w) = cfg_warn {
         crate::state::log_line("WARN", &format!("[config] {w}"));
     }
-    // Dashboard login throttle is env-only: MAX_LOGINS_PER_IP_PER_MINUTE
+    // Dashboard login throttle is startup-only: admin.max_logins_per_ip_per_minute
     // (default 5). The /auth throttle always comes from the config file
     // (auth.max_per_minute_per_ip) — see auth.rs.
-    let dash_login_max_per_min: u32 = std::env::var("MAX_LOGINS_PER_IP_PER_MINUTE")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5)
-        .clamp(1, 10_000);
+    let dash_login_max_per_min = settings.admin.max_logins_per_ip_per_minute;
     let perms_path = PathBuf::from(&config.global.permission_file);
     let perms = match std::fs::read_to_string(&perms_path) {
         Ok(text) => match PermissionsFile::parse(&text) {
@@ -472,23 +359,20 @@ async fn run(max_workers: usize) {
     }
 
     // --- JWT secret ---
-    let jwt_secret: [u8; 32] = match std::env::var("JWT_SECRET") {
-        Ok(s) if !s.is_empty() => {
-            let digest = Sha256::digest(s.as_bytes());
-            let mut h = [0u8; 32];
-            h.copy_from_slice(&digest);
-            h
-        }
-        _ => {
-            use rand::RngCore;
-            let mut b = [0u8; 32];
-            rand::rngs::OsRng.fill_bytes(&mut b);
-            crate::state::log_line(
-                "WARN",
-                "[auth] JWT_SECRET not set: generated a random secret for this run; all existing tokens will be invalid after restart",
-            );
-            b
-        }
+    let jwt_secret: [u8; 32] = if !settings.auth.jwt_secret.is_empty() {
+        let digest = Sha256::digest(settings.auth.jwt_secret.as_bytes());
+        let mut h = [0u8; 32];
+        h.copy_from_slice(&digest);
+        h
+    } else {
+        use rand::RngCore;
+        let mut b = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut b);
+        crate::state::log_line(
+            "WARN",
+            "[auth] auth.jwt_secret not set: generated a random secret for this run; all existing tokens will be invalid after restart",
+        );
+        b
     };
 
     // --- MongoDB ---
@@ -501,7 +385,11 @@ async fn run(max_workers: usize) {
     };
 
     // --- TLS ---
-    let (tls_state, https) = match (env_path("TLS_CERT_PATH"), env_path("TLS_KEY_PATH")) {
+    let cert = (!settings.tls.cert_path.trim().is_empty())
+        .then(|| PathBuf::from(&settings.tls.cert_path));
+    let key = (!settings.tls.key_path.trim().is_empty())
+        .then(|| PathBuf::from(&settings.tls.key_path));
+    let (tls_state, https) = match (cert, key) {
         (Some(cert), Some(key)) => match tls::TlsState::new(cert, key) {
             Ok(ts) => (Some(Arc::new(ts)), true),
             Err(e) => {
@@ -538,7 +426,8 @@ async fn run(max_workers: usize) {
         mongo,
         config_path,
         perms_path,
-        env_str("USERNAME", "admin"),
+        settings.admin.username.clone(),
+        settings.admin.password_hash.clone(),
         max_insert_batch,
         dash_login_max_per_min,
     );

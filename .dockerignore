@@ -5,6 +5,7 @@
 target
 node_modules
 .env
+server.yml
 config
 config.bak*
 authorized_keys.yml

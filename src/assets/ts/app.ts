@@ -1970,7 +1970,7 @@ async function renderLogs() {
       const r = d.retention;
       if (r && r.files) {
         $("#logs-retention").textContent =
-          `${r.files} files × ${r.size_mb} MB (${r.path}) — set via LOG_FILES / LOG_SIZE_MB in .env`;
+          `${r.files} files × ${r.size_mb} MB (${r.path}) — set via log.files / log.size_mb in server.yml`;
       }
       renderLogSugg();
       renderLogList(true);

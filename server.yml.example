@@ -1,0 +1,72 @@
+# server.yml — startup-only server settings (read once at boot; restart to apply).
+# Copy to `server.yml` next to the executable / working directory. Gitignored.
+# `server.yml` is shared by bare-metal and Docker (both mount the repo root as
+# the working directory). Docker-compose OVERRIDES fields via environment
+# variables (env > server.yml > baked-in default) — the container needs
+# HOST=0.0.0.0 and MONGODB_URI=mongodb://xavierdb:27017, injected in compose.yaml.
+# EXCEPTION: admin.username / admin.password_hash ALWAYS come from this file
+# (Windows always sets USERNAME in the environment, so an env override would
+# break the dashboard login on bare metal).
+
+# --- TLS (optional) ---
+# Point at a PEM certificate and private key to serve HTTPS. Both empty (or a
+# single one set) = plain HTTP. Certificates are hot-reloaded on change.
+# Alternatively use a reverse proxy (nginx, Caddy, Traefik, ...) to terminate TLS (recommended).
+tls:
+  cert_path: ""
+  key_path: ""
+
+# --- network ---
+network:
+  # Bind address. Default 127.0.0.1 (localhost only). In Docker this is
+  # overridden to 0.0.0.0 by compose.yaml (loopback is unreachable through the
+  # published port).
+  host: "127.0.0.1"
+  port: 8000
+  # MongoDB connection URI. In Docker this is overridden to the mongo service
+  # name (mongodb://xavierdb:27017) by compose.yaml.
+  mongodb_uri: "mongodb://localhost:27017"
+
+# --- runtime ---
+runtime:
+  # Number of Tokio worker threads (default 4; clamped 1..=512).
+  max_workers: 4
+  # Max documents per insert batch (POST /q with array `data`). Batches larger
+  # than this are rejected with 400 before reaching MongoDB. Default 1000;
+  # must be >= 1 (MongoDB's own 100k write-batch limit still applies).
+  max_insert_batch: 1000
+
+# --- rotating log files (optional) ---
+# The server writes its logs to rotating files on disk: `xavierdb.log`
+# (current) plus `xavierdb.log.1` .. `xavierdb.log.N` backups, in the working
+# directory. The dashboard Logs tab reads from these files (no in-memory
+# ring). Disk use is bounded by files x size. Defaults: 5 files x 10 MB.
+log:
+  files: 5        # clamped 1..=10
+  size_mb: 10     # clamped 1..=20
+
+# --- admin dashboard ---
+admin:
+  # Username for the dashboard login.
+  username: "admin"
+  # Argon2id PHC hash of the dashboard password.
+  # IMPORTANT: if you leave this empty, the server generates a strong 64-char
+  # password, hashes it, writes the hash back here and prints the password to
+  # the terminal exactly once. ($ is not special in YAML — no quoting needed.)
+  password_hash: ""
+  # Max login attempts per IP per minute for the DASHBOARD login only
+  # (brute-force protection). Default 5 (clamped 1..=10000). The client /auth
+  # endpoint always uses the `config` file value (auth.max_per_minute_per_ip,
+  # editable in the dashboard settings) — this does NOT affect /auth.
+  max_logins_per_ip_per_minute: 5
+
+# --- authentication (optional) ---
+auth:
+  # Secret used to sign JWTs. If empty, a random secret is generated at
+  # startup and every existing token becomes invalid after a restart. Set a
+  # fixed value here to keep tokens valid across restarts.
+  # Any long random string works (it is hashed into the 256-bit signing key).
+  # Generate your own with:  openssl rand -base64 48
+  # IMPORTANT: never use a value that ships with the repo — a publicly known
+  # secret lets anyone forge tokens.
+  jwt_secret: ""

@@ -45,16 +45,22 @@ services:
     # rust:1-slim-bookworm (see Dockerfile); compose names it <project>-api.
     build: .
     container_name: XavierAPI
-    user: "$UID:$GID"                              # run as the host user, not root
+    user: "$UID:$GID"                              # run as the host user, not root (UID/GID from .env)
     environment:
       - TZ=Europe/Paris
-      - HOST=0.0.0.0                               # default 127.0.0.1 is unreachable inside a container
+      # These OVERRIDE server.yml (precedence: env > server.yml > default):
+      # the app reads its settings from server.yml, and OS env vars win. A
+      # server.yml with host=127.0.0.1 / localhost mongo (bare-metal defaults)
+      # must not reach a container: loopback is unreachable via the published
+      # port and "localhost" is the API container itself. `.env` is only
+      # UID/GID (compose interpolation) — the app never reads it.
+      - HOST=0.0.0.0                               # bind all interfaces inside the container
       - MONGODB_URI=mongodb://xavierdb:27017       # mongo service name; default localhost won't work
     working_dir: /app
     volumes:
-      - ".:/app"                                   # repo root = single source of truth: .env, config, config.bak, authorized_keys.yml
+      - ".:/app"                                   # repo root = single source of truth: server.yml, config, config.bak, authorized_keys.yml
     ports:
-      - "8000:8000"                                # forward the API on port 8000
+      - "127.0.0.1:8000:8000"                      # forward the API on port 8000
     deploy:
       resources:
         limits:
@@ -66,7 +72,7 @@ services:
         condition: service_healthy
     healthcheck:
       # cheap local curl against the cached /health; the https fallback
-      # keeps the check green when TLS is enabled in .env (with TLS the
+      # keeps the check green when TLS is enabled in server.yml (with TLS the
       # plain-http listener does not exist at all)
       test:
         - "CMD-SHELL"
@@ -85,4 +91,5 @@ services:
           path: ./src
 
 volumes:
+  xavier_mongo_db:
   xavier_configdb:

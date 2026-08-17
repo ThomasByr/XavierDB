@@ -44,8 +44,8 @@ pub struct AppState {
     pub sessions: DashMap<String, AdminSession>,
     /// /auth throttle per IP: ip -> (window_start_ms, count).
     pub auth_throttle: DashMap<String, (i64, u32)>,
-    /// Dashboard login throttle per IP (separate from /auth: env
-    /// MAX_LOGINS_PER_IP_PER_MINUTE, default 5).
+    /// Dashboard login throttle per IP (separate from /auth: server.yml
+    /// admin.max_logins_per_ip_per_minute, default 5).
     pub dash_throttle: DashMap<String, (i64, u32)>,
 
     /// MongoDB client (lazy connect).
@@ -64,12 +64,14 @@ pub struct AppState {
     /// Paths (resolved at startup).
     pub config_path: std::path::PathBuf,
     pub perms_path: std::path::PathBuf,
-    /// Admin username from .env.
+    /// Admin dashboard credentials from server.yml.
     pub admin_user: String,
-    /// Max documents per insert batch (MAX_INSERT_BATCH env, default 1000).
+    pub password_hash: String,
+    /// Max documents per insert batch (server.yml runtime.max_insert_batch,
+    /// default 1000).
     pub max_insert_batch: usize,
-    /// Dashboard login limit per IP per minute (env
-    /// MAX_LOGINS_PER_IP_PER_MINUTE, default 5).
+    /// Dashboard login limit per IP per minute (server.yml
+    /// admin.max_logins_per_ip_per_minute, default 5).
     pub dash_login_max_per_min: u32,
 }
 
@@ -84,6 +86,7 @@ impl AppState {
         config_path: std::path::PathBuf,
         perms_path: std::path::PathBuf,
         admin_user: String,
+        password_hash: String,
         max_insert_batch: usize,
         dash_login_max_per_min: u32,
     ) -> Arc<Self> {
@@ -114,6 +117,7 @@ impl AppState {
             config_path,
             perms_path,
             admin_user,
+            password_hash,
             max_insert_batch,
             dash_login_max_per_min,
         })
@@ -254,8 +258,8 @@ pub struct LogEntry {
 
 /// Rotating log files on disk — the ONLY log store (no in-memory ring: the
 /// Logs tab reads back from these files, so memory stays flat regardless of
-/// traffic). Settings come from env (LOG_FILES / LOG_SIZE_MB, see
-/// .env.example) and are NOT live-changeable.
+/// traffic). Settings come from server.yml (log.files / log.size_mb, see
+/// server.yml.example) and are NOT live-changeable.
 ///
 /// Files (cwd-relative): `xavierdb.log` = current/newest, `xavierdb.log.1` =
 /// previous, ... `xavierdb.log.{files-1}` = oldest. When the current file
@@ -406,8 +410,8 @@ impl LogFileSink {
 /// (env bootstrap, config/perms load, JWT notice, panic hook) are captured too.
 static LOG_FILES: OnceLock<Mutex<LogFileSink>> = OnceLock::new();
 
-/// Initialize the rotating log files. Called once at startup from env
-/// LOG_FILES / LOG_SIZE_MB (clamped to 1..=10 / 1..=20).
+/// Initialize the rotating log files. Called once at startup from server.yml
+/// log.files / log.size_mb (clamped to 1..=10 / 1..=20).
 pub fn init_log_files(files: usize, size_mb: usize) {
     let dir = std::env::current_dir().unwrap_or_default();
     let sink = LogFileSink::new(dir, files, (size_mb as u64) * 1024 * 1024);
@@ -639,5 +643,5 @@ mod tests {
         assert!(page.iter().all(|e| e.seq < 10));
         assert_eq!(page[0].seq, 5, "last 5 before seq 10");
         let _ = std::fs::remove_dir_all(&dir);
-    }
+}
 }

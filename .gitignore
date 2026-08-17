@@ -1,6 +1,7 @@
 target/
 examples/target/
 .env
+server.yml
 authorized_keys.yml
 config
 config.bak*

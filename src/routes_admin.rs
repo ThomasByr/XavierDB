@@ -57,12 +57,12 @@ pub async fn login(
 ) -> Result<impl IntoResponse, ApiError> {
     // peer socket IP only — see routes_misc::auth_login (X-Forwarded-For is
     // client-controlled and must not be trusted for throttling). Dashboard
-    // login has its OWN throttle (env MAX_LOGINS_PER_IP_PER_MINUTE), separate
-    // from the /auth throttle (config file).
+    // login has its OWN throttle (server.yml admin.max_logins_per_ip_per_minute),
+    // separate from the /auth throttle (config file).
     let ip = addr.0.ip().to_string();
     crate::auth::dash_throttled(&state, &ip)?;
 
-    let password_hash = std::env::var("PASSWORD_HASH").unwrap_or_default();
+    let password_hash = state.password_hash.clone();
     let user_ok = body.username == state.admin_user && !password_hash.is_empty();
     // run the hash on the blocking pool (Argon2id takes seconds; the async
     // workers must stay responsive) and verify against a fixed dummy hash on

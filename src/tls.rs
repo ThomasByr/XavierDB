@@ -1,9 +1,9 @@
 //! Optional TLS with live certificate reload, plus the axum Listener types.
 //!
-//! When TLS_CERT_PATH and TLS_KEY_PATH point to valid PEM files, the server
-//! listens with TLS. The certificate/key are watched; on change they are
-//! re-parsed and swapped atomically — new connections use the new
-//! certificate, established ones keep the old.
+//! When server.yml `tls.cert_path` and `tls.key_path` point to valid PEM
+//! files, the server listens with TLS. The certificate/key are watched; on
+//! change they are re-parsed and swapped atomically — new connections use the
+//! new certificate, established ones keep the old.
 
 use std::io::BufReader;
 use std::path::PathBuf;

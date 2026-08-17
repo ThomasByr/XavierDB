@@ -11,7 +11,6 @@ bincode = { version = "2.0.1", features = ["serde"] }
 bson = { version = "2", features = ["chrono-0_4"] }
 crc32fast = "1.5.0"
 dashmap = "6.2.1"
-dotenvy = "0.15.7"
 futures = "0.3.33"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 mongodb = "3.3.0"

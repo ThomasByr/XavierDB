@@ -185,7 +185,7 @@ pub fn check_admin_session(state: &AppState, token: &str) -> Result<String, ApiE
 //
 // Two SEPARATE throttles with separate limits:
 //   - /auth:            limit from the config file (auth.max_per_minute_per_ip)
-//   - dashboard login:  limit from env MAX_LOGINS_PER_IP_PER_MINUTE (default 5)
+//   - dashboard login:  limit from server.yml admin.max_logins_per_ip_per_minute (default 5)
 // ---------------------------------------------------------------------------
 
 fn throttle_check(
@@ -220,8 +220,9 @@ pub fn auth_throttled(state: &AppState, ip: &str) -> Result<(), ApiError> {
     throttle_check(&state.auth_throttle, ip, max)
 }
 
-/// Dashboard login throttle: limit from env MAX_LOGINS_PER_IP_PER_MINUTE
-/// (default 5), its own counter — the /auth limit does NOT apply here.
+/// Dashboard login throttle: limit from server.yml
+/// admin.max_logins_per_ip_per_minute (default 5), its own counter — the
+/// /auth limit does NOT apply here.
 pub fn dash_throttled(state: &AppState, ip: &str) -> Result<(), ApiError> {
     throttle_check(&state.dash_throttle, ip, state.dash_login_max_per_min)
 }

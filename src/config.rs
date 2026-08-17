@@ -75,9 +75,9 @@ pub struct DashboardCfg {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AuthCfg {
     /// Max login attempts per minute per IP on /auth (brute-force
-    /// protection). The dashboard login has its own separate limit from env
-    /// MAX_LOGINS_PER_IP_PER_MINUTE (default 5) — this field does not apply
-    /// to the dashboard.
+    /// protection). The dashboard login has its own separate limit from
+    /// server.yml admin.max_logins_per_ip_per_minute (default 5) — this
+    /// field does not apply to the dashboard.
     pub max_per_minute_per_ip: u32,
     /// Admin dashboard session lifetime in hours.
     pub session_ttl_hours: u64,

@@ -4,23 +4,33 @@ Three places hold configuration:
 
 | file | what lives there | edited by |
 |---|---|---|
-| `.env` | host/port, MongoDB URI, workers, TLS, dashboard credentials | hand |
+| `server.yml` | host/port, MongoDB URI, workers, TLS, dashboard credentials, JWT secret | hand (startup-only) |
 | `authorized_keys.yml` | app tokens (Argon2id hashes) + permissions | dashboard or hand (hot reload) |
 | `config` | everything else (binary) | dashboard (undo/redo) |
 
-## `.env`
+Precedence: OS environment variable (set and non-empty) > `server.yml` >
+baked-in default — so Docker Compose can inject container values (`HOST`,
+`MONGODB_URI`) without touching the file. Exception: `admin.username` and
+`admin.password_hash` always come from the file (Windows always sets
+`USERNAME` in the environment). `server.yml` is read once at boot;
+restart to apply. Copy `server.yml.example` to `server.yml` to get a
+documented template.
+
+## `server.yml`
 
 | key | default | meaning |
 |---|---|---|
-| `HOST` | `127.0.0.1` | bind address |
-| `PORT` | `8000` | listen port |
-| `MONGODB_URI` | `mongodb://localhost:27017` | MongoDB connection string |
-| `MAX_WORKERS` | `4` | Tokio worker threads |
-| `MAX_INSERT_BATCH` | `1000` | max documents per insert batch (`POST /q` with array `data`); must be ≥ 1, larger batches → `400` |
-| `TLS_CERT_PATH` / `TLS_KEY_PATH` | empty | PEM cert + key → serve HTTPS; both files are hot-reloaded on change; ignored when invalid |
-| `USERNAME` | `admin` | dashboard login name |
-| `PASSWORD_HASH` | empty | Argon2id PHC hash of the dashboard password. **Must be single-quoted** (`'$argon2id$…'`) because of the `$` signs. Empty → generated once and printed to the terminal |
-| `JWT_SECRET` | random per start | JWT signing secret. Set a fixed value to keep tokens valid across restarts |
+| `tls.cert_path` / `tls.key_path` | empty | PEM cert + key → serve HTTPS; both files are hot-reloaded on change; ignored when invalid |
+| `network.host` | `127.0.0.1` | bind address |
+| `network.port` | `8000` | listen port |
+| `network.mongodb_uri` | `mongodb://localhost:27017` | MongoDB connection string |
+| `runtime.max_workers` | `4` | Tokio worker threads |
+| `runtime.max_insert_batch` | `1000` | max documents per insert batch (`POST /q` with array `data`); must be ≥ 1, larger batches → `400` |
+| `log.files` / `log.size_mb` | `5` / `10` | rotating log files (clamped 1–10 files × 1–20 MB) |
+| `admin.username` | `admin` | dashboard login name |
+| `admin.password_hash` | empty | Argon2id PHC hash of the dashboard password. `$` needs no quoting in YAML. Empty → generated once and printed to the terminal |
+| `admin.max_logins_per_ip_per_minute` | `5` | dashboard-login brute-force throttle per IP per minute (clamped 1–10 000); `/auth` always uses `config.auth.max_per_minute_per_ip` |
+| `auth.jwt_secret` | random per start | JWT signing secret. Set a fixed value to keep tokens valid across restarts |
 
 ## `config` (binary, auto-generated)
 

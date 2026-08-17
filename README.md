@@ -31,7 +31,7 @@
 
 ## Quick start (Docker)
 
-Prerequisites: Docker with Compose v2 (e.g. Docker Desktop).
+Prerequisites: Docker with Compose v2+ (e.g. Docker Desktop).
 
 ```bash
 docker compose up --build -d
@@ -50,9 +50,10 @@ State persists on the host:
 > Put your MongoDB data in `{HOME}/data/xavier-mongo-db` or edit
 > [compose.yaml](compose.yaml) to change the volume mount.
 
-The API uses the repo's `.env` as-is. If `PASSWORD_HASH` is blank, the
-admin dashboard password is **generated and printed once** in the API
-container logs (it is hashed into `.env` — `USERNAME` defaults to `admin`):
+The API reads the repo's `server.yml` (created from `server.yml.example` on
+first boot). If `admin.password_hash` is blank, the admin dashboard password
+is **generated and printed once** in the API container logs (it is hashed
+into `server.yml` — `admin.username` defaults to `admin`):
 
 ```bash
 docker compose logs api
@@ -64,17 +65,17 @@ docker compose logs api
 Prerequisites: Rust (stable), a running MongoDB (default `mongodb://localhost:27017`).
 
 ```bash
-npm install           # generate src/assets/app.js (dashboard TypeScript -> JS)
+npm install  # generate src/assets/app.js (dashboard TypeScript -> JS)
 npm run build
 
-cp .env.example .env  # edit HOST/PORT/MONGODB_URI if needed
+cp server.yml.example server.yml  # edit host/port/mongodb_uri if needed
 cp authorized_keys.yml.example authorized_keys.yml
 
 cargo run --release
 ```
 
 The admin dashboard password is **generated and printed once in the
-terminal** (it is hashed into `.env` — `USERNAME` defaults to `admin`).
+terminal** (it is hashed into `server.yml` — `admin.username` defaults to `admin`).
 
 </details>
 
@@ -107,7 +108,7 @@ once per session.
 
 - [ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md) for the dashboard and its API
 - [API_REFERENCE.md](docs/API_REFERENCE.md) for the full API reference
-- [CONFIGURATION.md](docs/CONFIGURATION.md) for the `.env` and `authorized_keys.yml` formats
+- [CONFIGURATION.md](docs/CONFIGURATION.md) for the `server.yml` and `authorized_keys.yml` formats
 
 ## Examples
 
