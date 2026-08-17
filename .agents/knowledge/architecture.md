@@ -7,7 +7,7 @@
   `{token, token_type:"Bearer", expires_in:5400, identifier}` + `Set-Cookie:
   xdb_token` (HttpOnly; Secure under TLS). 401 bad creds, 403 BLOCKED, 429
   throttle.
-- JWT: HS256, secret = env `JWT_SECRET` or random-per-start; lifetime from
+- JWT: HS256, secret = server.yml `auth.jwt_secret` or random-per-start; lifetime from
   `config.global.jwt_token_lifetime_minutes` (default 90). Expired/malformed →
   401 with a 5s leeway; reason swallowed. Client loop: on 401 re-auth, on 403
   do NOT re-auth.
@@ -22,8 +22,8 @@
   TTL `config.auth.session_ttl_hours` default 24) — **restart = re-login**.
 - Login throttles: `/auth` and dashboard login have SEPARATE per-IP 1-minute
   windows. `/auth` always uses `config.auth.max_per_minute_per_ip` (default
-  30, dashboard-editable); dashboard login uses env
-  `MAX_LOGINS_PER_IP_PER_MINUTE` (default 5, clamped 1..=10_000).
+  30, dashboard-editable); dashboard login uses server.yml
+  `admin.max_logins_per_ip_per_minute` (default 5, clamped 1..=10_000).
 
 ### Auth Q&A (verified from code — auth.rs, perms.rs)
 
@@ -84,8 +84,9 @@
 - POST: `{filter?, data}` — no filter = insert (201): `data` object →
   `insert_one` (`{inserted_count:1, inserted_id}`); `data` array → `insert_many`
   (`{inserted_count:n, inserted_ids:[…]}` in input order, cap
-  `state.max_insert_batch` — env `MAX_INSERT_BATCH`, default 1000 (main.rs,
-  routes_q.rs `MAX_INSERT_BATCH`), must be ≥ 1, also published top-level in
+  `state.max_insert_batch` — server.yml `runtime.max_insert_batch`, default
+  1000 (main.rs, routes_q.rs `MAX_INSERT_BATCH`), must be ≥ 1, also published
+  top-level in
   `/health`; empty/
   non-object/dup-`_id`-within-batch → 400 with nothing inserted; dup against
   existing data → 409 with ordered semantics — docs before the dup remain).
@@ -241,7 +242,7 @@
   jwt_token_lifetime_seconds, max_document_limit}, app:{status, uptime_s, p50_latency_ms,
   total_requests, active_cursors}, mongodb:{reachable, ping_latency_ms,
   error}}` — 200 only when ok, else 503. `max_insert_batch` is the
-  insert-batch cap (MAX_INSERT_BATCH env), static per process — the battery
+  insert-batch cap (server.yml runtime.max_insert_batch), static per process — the battery
   reads it from here so cap-boundary tests work with custom values.
   `constants.jwt_token_lifetime_seconds` mirrors the effective
   config.global.jwt_token_lifetime_minutes × 60 — auth_flow::login_ok
@@ -273,8 +274,8 @@
   session cookie; errors same `{error, code, status}` shape): login/logout/
   session, metrics (big poll payload), block/unblock, app_weight, perms
   GET/POST(full-merge)/reload, databases, config GET/POST/undo/redo/reload/
-  reset/revert/export/import, logs (rotating FILES on disk, env-configured
-  LOG_FILES/LOG_SIZE_MB — no in-memory ring; ?limit&before paging + app/name
+  reset/revert/export/import, logs (rotating FILES on disk, server.yml-configured
+  log.files/log.size_mb — no in-memory ring; ?limit&before paging + app/name
   facets; every console line incl. eprintln/panics). Contracts: see api.md.
 - Config tab: EXPLICIT save — slider edits alone don't persist (a page
   reload discards them); an amber "unsaved changes" dirty pill is pinned to

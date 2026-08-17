@@ -26,8 +26,9 @@ validation) map to 400; duplicate keys → 409.
 - `POST /dashboard/api/login` `{username, password}` → `{"ok":true}` + cookie
   `xdb_admin` (Path=/dashboard, HttpOnly, SameSite=Strict, Max-Age follows
   `auth.session_ttl_hours`; +`; Secure` under TLS). Throttle SEPARATE from
-  client /auth: per-IP, default 5/min from env `MAX_LOGINS_PER_IP_PER_MINUTE`
-  (dashboard login only). Argon2id verify runs on the blocking
+  client /auth: per-IP, default 5/min from server.yml
+  `admin.max_logins_per_ip_per_minute` (dashboard login only). Argon2id verify
+  runs on the blocking
   pool; unknown usernames verify against a fixed dummy hash (no timing
   oracle). Success/failure logged (info/warn).
 - `POST /dashboard/api/logout` / `GET /dashboard/api/session` →
@@ -68,7 +69,7 @@ validation) map to 400; duplicate keys → 409.
   `state::apply_log_level` (reload::Layer — no restart).
 - `GET /dashboard/api/logs` → `{lines:[{seq, raw, level, logger, app, name}],
   total, apps, names, loggers, retention:{files, size_mb, path}}` — reads the
-  ROTATING LOG FILES (xavierdb.log + .1..N, env LOG_FILES/LOG_SIZE_MB, no
+  ROTATING LOG FILES (xavierdb.log + .1..N, server.yml log.files/log.size_mb, no
   in-memory ring); `?limit=N` (0 = all, cap 10k), `?before=<seq>` load-older
   paging; `apps`/`names`/`loggers` = facets from a bounded scan (last 2000
   lines); `names` = [{app, name}] pairs sorted by app. EVERYTHING the process

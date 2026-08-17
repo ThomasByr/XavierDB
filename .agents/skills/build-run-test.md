@@ -6,7 +6,7 @@ npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (on
 #   npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
 cargo build                      # debug; on OSes that lock running executables this
                                  #   fails while the server is running — see restart-ritual.md
-cargo test                       # 44 unit + 110 integration tests (tests/); needs a running server
+cargo test                       # 50 unit + 110 integration tests (tests/); needs a running server
                                  #   + MongoDB — see "Integration battery" below; tests talk to
                                  #   real Mongo unconditionally (XDB_TB_MONGO_URI, default
                                  #   mongodb://localhost:27017; the env-gated unit equivalence
@@ -22,7 +22,9 @@ needs the test battery: kill → `cargo build --tests` → start → `cargo test
 (restart-ritual.md).
 
 A second server instance can run with env overrides (e.g. `PORT=8443`,
-`TLS_CERT_PATH=...`, `TLS_KEY_PATH=...`) sharing the same cwd state files.
+`TLS_CERT_PATH=...`, `TLS_KEY_PATH=...` — env vars override `server.yml`;
+`admin.username`/`admin.password_hash` always come from the file) sharing the
+same cwd state files.
 
 ## Examples (own crate, own lockfile — independent of the server build)
 
@@ -32,7 +34,7 @@ cargo run --manifest-path examples/Cargo.toml --bin setup_projection -- --admin-
 cargo run --manifest-path examples/Cargo.toml --bin projection
 ```
 
-Dashboard username for the setup examples = `.env` USERNAME (default
+Dashboard username for the setup examples = `server.yml` admin.username (default
 `admin`); re-running a setup is idempotent (it refreshes the token hash).
 Full contracts: examples.md.
 
@@ -67,7 +69,13 @@ readbacks of >200 docs use the mongodb driver directly (see the crud_verbs
 cap-boundary test).
 
 Machine facts worth knowing:
-- If `.env` has NO `JWT_SECRET`, the secret is random per restart → cached
+- Running the battery against the DOCKER stack (API + Mongo in containers,
+  local rust tests): no env overrides needed — defaults already point at
+  127.0.0.1:8000 / mongodb://localhost:27017 (both published by compose).
+  EXCEPTION: `watcher_reload` is expected to FAIL on Docker Desktop (inotify
+  does not work over VirtioFS bind mounts — see docker.md); everything else
+  is green (verified 108/110, 2026-08-16).
+- If `server.yml` has NO `auth.jwt_secret`, the secret is random per restart → cached
   JWTs die on restart; the battery self-heals (probe → 401 → re-login;
   ~9 logins ≈ 45 s once per server start, within the 30/min throttle).
 - The mongodb dev-dep resolves to 3.8.0 (create_index takes a single

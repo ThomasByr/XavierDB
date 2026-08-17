@@ -9,7 +9,7 @@
   represented in a keyset cursor; silent loss/loops would be worse. NaN/±Inf
   sort values ARE handled (NaN sorts first ascending on MongoDB 8).
 - `/auth` and dashboard login have SEPARATE per-IP throttles (dashboard
-  login: env `MAX_LOGINS_PER_IP_PER_MINUTE`, default 5; `/auth`:
+  login: server.yml `admin.max_logins_per_ip_per_minute`, default 5; `/auth`:
   `config.auth.max_per_minute_per_ip`, default 30). Both key on the peer
   socket IP — `X-Forwarded-For` is deliberately NOT trusted (no proxy in the
   deployment; the header is client-controlled). Window is a fixed wall-clock
@@ -72,13 +72,26 @@
   the viewport bottom, legend wrap, slider feel. Other pre-existing cosmetic
   items: theme sync only on overview route entry; search input resets after a
   perms widget save. Declined/not implemented: beforeunload dirty guard.
-- Docker setup never run (development machine has no Docker) — build,
-  healthcheck, volume, and in-container watcher behavior unverified.
+- **Docker (verified 2026-08-16, Docker Desktop 29.7.2/WSL2):** full build +
+  compose up + healthchecks work; battery vs the docker API is 108/110. The
+  app's perms/config/TLS hot reloads are pure inotify and inotify events do
+  NOT flow over Docker Desktop bind mounts (VirtioFS; even container-side
+  writes never fire — virtiofsd has no FUSE notify) → `watcher_reload` is
+  expected to FAIL when the API runs on Docker Desktop (bare metal / Linux
+  hosts pass). Settings precedence: env var > server.yml > default (so
+  compose injects HOST/MONGODB_URI into the container; bare metal uses the
+  file) — except admin.username/password_hash, which always come from the
+  file (Windows always sets USERNAME). Details: skills/docker.md.
 - `config` hot-reload + atomic-rename editors (vim etc.) may detach the notify
   watcher — restart re-attaches.
 
 ## Deferred work
 
+- **Docker build speed — pending (2026-08-17).** Two safe fixes identified
+  and measured (context exclusions in .dockerignore; copy Cargo.lock into the
+  dummy-main layer) plus one dangerous pattern to avoid (target-dir cache
+  mount leaks the dummy binary). Reverted, not applied — details:
+  skills/docker.md "Build speed" section.
 - **Performance verification — deferred (2026-08-11, user decision).** No
   perf work in the 3 review rounds (correctness/security/contracts only).
   No benchmarks, no profiling, no load tests in the repo. Natural first steps
@@ -91,7 +104,7 @@
 
 ## Verification checkpoints after code changes
 
-`cargo test` (154 tests — 44 unit + 110 integration; NaN/±Inf sort and
+`cargo test` (160 tests — 50 unit + 110 integration; NaN/±Inf sort and
 array-sort pagination are covered live by tests/pagination.rs
 `nan_sort_paginates` + `array_sort_guard` through the server's own Mongo
 connection; crud_verbs.rs talks to Mongo directly with XDB_TB_MONGO_URI,

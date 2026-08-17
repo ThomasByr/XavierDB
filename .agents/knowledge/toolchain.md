@@ -22,7 +22,8 @@ Required versions / facts:
   **Python**: only dev scripts; always `uv run python`. **mongosh** is
   optional — shell access only; neither the server nor the battery needs it.
 - A bare-metal run needs only two things: `mongod` reachable at
-  `mongodb://localhost:27017` (override with `MONGODB_URI` in `.env`) and
+  `mongodb://localhost:27017` (override with `network.mongodb_uri` in
+  `server.yml`, or the `MONGODB_URI` env var) and
   `./target/debug/XavierDB` started from the repo root (cwd-relative state
   files, no CLI args).
 - Machine-local facts (portable-mongod layout, shell quirks, ops commands)

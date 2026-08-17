@@ -22,8 +22,9 @@ file(s) before starting work, update them after.
 3. **Docker is optional.** If `docker` and the compose plugin are not on PATH
    (`command -v docker && docker --version && docker compose version`), run
    bare metal (`.agents/skills/build-run-test.md`). The compose/Docker setup
-   (`.agents/skills/docker.md`) is UNVERIFIED — it has never been run
-   anywhere yet.
+   (`.agents/skills/docker.md`) is VERIFIED on Docker Desktop (2026-08-16)
+   with one known limitation: file-watcher hot reloads don't work in
+   containers on Docker Desktop (inotify over VirtioFS) — see docker.md.
 4. **Some OSes refuse to overwrite a running executable** — `cargo build`
    fails until the server is killed (on the dev machine the error is
    "Accès refusé"). Restart ritual (each step a SEPARATE shell command; the
@@ -50,9 +51,11 @@ file(s) before starting work, update them after.
    Keep `.agents/` machine-agnostic: per-OS command variants (POSIX /
    Windows) only where commands genuinely differ; machine-local facts belong
    in `.pi/notes/credentials.md`.
-6. `.env` may be awkward to touch from some shells (a protected path on the
-   dev machine) — read it via `read`/`cat` with care; `PASSWORD_HASH` is
-   single-quoted in the file.
+6. `server.yml` (settings, contains `admin.password_hash`) may be awkward to
+   touch from some shells (a protected path on the dev machine) — read it via
+   `read`/`cat` with care; `$` in the hash needs no quoting in YAML. `.env`
+   now holds only `UID`/`GID` (Docker-compose interpolation — the app never
+   reads it).
 7. Credentials are machine-local: read them from `.pi/notes/credentials.md`
    (gitignored — never commit or copy them into repo files). See
    `.agents/skills/credentials.md` for how to obtain or regenerate them on a
@@ -65,8 +68,9 @@ npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (on
 (cd web && npm install && npm run docs:build)  # rebuild VitePress site (web/ is its own npm project)
 # typecheck: npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
 cargo build                      # fails while the server is running on some OSes — see rule 4
-cargo test                       # 44 unit + 110 integration; needs a running server + MongoDB
+cargo test                       # 50 unit + 110 integration; needs a running server + MongoDB
 ./target/debug/XavierDB          # from repo root; cwd-relative state files; no CLI args
+                                 # (settings: server.yml + env overrides; no .env)
 ```
 
 Any rebuild that touches the server binary follows the kill →
@@ -81,7 +85,7 @@ dashboard specifics: `.agents/skills/dashboard-rebuild.md`.
 |---|---|
 | `overview.md` | what this is, route table |
 | `repo-layout.md` | full file tree, Docker image vs. repo mechanics |
-| `config-world.md` | runtime state files (`.env`/`config`/`authorized_keys.yml`/logs), hot reload, watchers |
+| `config-world.md` | runtime state files (`server.yml`/`.env`/`config`/`authorized_keys.yml`/logs), hot reload, watchers |
 | `architecture.md` | auth, perms, `/q` proxy, `/ls`, adaptive limit, config file, health, TLS, dashboard + UI architecture |
 | `api.md` | client + dashboard API contracts |
 | `docs-index.md` | what each doc file covers |
@@ -96,6 +100,6 @@ dashboard specifics: `.agents/skills/dashboard-rebuild.md`.
 | `build-run-test.md` | full build pipeline, examples, integration battery |
 | `dashboard-rebuild.md` | dashboard asset rebuild cycle + jsdom harness pattern |
 | `examples.md` | examples/ crate commands + verified server facts |
-| `docker.md` | compose/Docker deployment ops (UNVERIFIED) |
+| `docker.md` | compose/Docker deployment ops (VERIFIED 2026-08-16 on Docker Desktop; watcher limitation — see rule 3) |
 | `credentials.md` | credential regeneration recipes |
 | `perms-watcher-ritual.md` | perms/config watcher snapshot & restore ritual |

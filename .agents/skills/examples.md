@@ -25,7 +25,7 @@ cargo run --manifest-path examples/Cargo.toml --bin projection
 ```
 
 Setup files must pass `--admin-user` explicitly — the dashboard username is
-`.env` USERNAME (default `admin`). Re-running a setup is idempotent (it
+`server.yml` admin.username (default `admin`). Re-running a setup is idempotent (it
 refreshes the token hash). `set_token` ≥ 8 chars, Argon2id-hashed
 server-side (~5 s per setup run).
 
