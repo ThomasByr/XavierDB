@@ -1,0 +1,28 @@
+services:
+  api:
+    # Disable the watch/rebuild behavior for faster dev loop
+    develop:
+      watch: []
+
+    volumes:
+      # Source mounting remains for live code
+      - ".:/app"
+      # Persist cargo registry across container restarts
+      - cargo-cache:/usr/local/cargo/registry
+      # Persist incremental build artifacts
+      - target-cache:/app/target
+
+    # Run cargo-watch inside container for instant recompilation
+    command: >
+      sh -c "apt-get update && apt-get install -y --no-install-recommends cargo-watch &&
+             cargo watch -x 'run --release'"
+
+    # Shorter health check interval for dev feedback
+    healthcheck:
+      interval: 5s
+      timeout: 2s
+      retries: 3
+
+volumes:
+  cargo-cache:
+  target-cache:
