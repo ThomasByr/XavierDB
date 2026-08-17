@@ -1,6 +1,6 @@
 # API reference
 
-Base URL: `http://<host>:<port>` (HTTPS when `TLS_CERT_PATH`/`TLS_KEY_PATH` are set).
+Base URL: `http://<host>:<port>` (HTTPS when `tls.cert_path`/`tls.key_path` are set in `server.yml`).
 
 Every error is JSON with a machine-readable code:
 
@@ -141,8 +141,8 @@ Body: `{ "filter"?: object, "data": object | object[] }`
 
 Batch insert (`data` as array) rules:
 - the array must be non-empty, every element must be a JSON object, and the
-  batch is capped at **`MAX_INSERT_BATCH`** (default 1000 documents,
-  configurable via the `.env` — see CONFIGURATION.md) — violations return
+  batch is capped at **`runtime.max_insert_batch`** (default 1000 documents,
+  configurable in `server.yml` — see CONFIGURATION.md) — violations return
   `400` `BAD_REQUEST` with **nothing inserted**.
 - a `_id` duplicated *within* the batch is rejected up front with `400`
   `BAD_REQUEST` (no partial write).
@@ -176,7 +176,7 @@ Two modes — the single-document upsert and the batch upsert-many:
   is carried by the filter, not the payload); no `_id` → plain insert with a
   generated ObjectId. Ids in both arrays are in **input order**. Batch
   validation matches POST batch insert (non-empty, objects only,
-  `MAX_INSERT_BATCH` cap, no `_id` duplicated within the batch → `400` with
+  `runtime.max_insert_batch` cap, no `_id` duplicated within the batch → `400` with
   nothing written). Conflicts against existing data (`_id` or a unique
   index) return `409` with MongoDB ordered semantics: the bulk aborts at
   the first failing element and elements before it remain applied. A
@@ -214,7 +214,7 @@ in the background — spamming it costs nothing.
   "next_refresh_seconds": 5,
   "compute_latency_ms": 2.3,          // p50 server-side processing time (no network)
   "qps": 8.2,
-  "max_insert_batch": 1000,           // insert-batch cap (MAX_INSERT_BATCH env; static per process)
+  "max_insert_batch": 1000,           // insert-batch cap (server.yml runtime.max_insert_batch; static per process)
   "app": { "status": "ok", "uptime_s": 25, "p50_latency_ms": 2.3,
            "total_requests": 1000, "active_cursors": 3 },
   "mongodb": { "reachable": true, "ping_latency_ms": 1.4, "error": null } }
