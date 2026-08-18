@@ -59,6 +59,13 @@ services:
       # UID/GID (compose interpolation) — the app never reads it.
       - HOST=0.0.0.0                               # bind all interfaces inside the container
       - MONGODB_URI=mongodb://mongodb:27017       # mongo service name; default localhost won't work
+      # Trust X-Real-IP / X-Forwarded-For for the client IP (throttles + logs).
+      # Safe here BECAUSE the port below is published to 127.0.0.1 ONLY: the
+      # sole connector is the host's nginx (prod), which sets X-Real-IP — no
+      # external client can reach the server directly to spoof headers.
+      # If you ever publish the port to other interfaces, REMOVE this line
+      # (see server.yml.example network.trust_proxy_headers).
+      - TRUST_PROXY_HEADERS=true
     working_dir: /app
     volumes:
       - ".:/app"                                   # repo root = single source of truth: server.yml, config, config.bak, authorized_keys.yml

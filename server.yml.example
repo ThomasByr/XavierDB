@@ -26,6 +26,15 @@ network:
   # MongoDB connection URI. In Docker this is overridden to the mongo service
   # name (mongodb://xavierdb:27017) by compose.yaml.
   mongodb_uri: "mongodb://localhost:27017"
+  # Trust the X-Real-IP / X-Forwarded-For headers for the client IP (login
+  # throttles + request log lines). Enable ONLY when a reverse proxy you
+  # control forwards to this server and clients cannot reach it directly
+  # (e.g. nginx in front, port bound to 127.0.0.1): then the proxy headers
+  # carry the real client IPs. Otherwise keep false — the headers are
+  # client-controlled and trusting them would allow brute-force throttle
+  # evasion. nginx needs:  proxy_set_header X-Real-IP $remote_addr;
+  # (X-Forwarded-For's LAST entry is used as a fallback.)
+  trust_proxy_headers: false
 
 # --- runtime ---
 runtime:
