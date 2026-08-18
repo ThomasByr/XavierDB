@@ -50,7 +50,11 @@ pub async fn auth_login(
     let (name, app) = match parse_identifier(&body.identifier) {
         Some(p) => p,
         None => {
-            warn!("login failed: {} from {}", log_ident(&body.identifier), from);
+            warn!(
+                "login failed: {} from {}",
+                log_ident(&body.identifier),
+                from
+            );
             return Err(ApiError::unauthorized());
         }
     };
@@ -81,7 +85,11 @@ pub async fn auth_login(
         .await
         .unwrap_or(false);
     if !ok {
-        warn!("login failed: {} from {}", log_ident(&body.identifier), from);
+        warn!(
+            "login failed: {} from {}",
+            log_ident(&body.identifier),
+            from
+        );
         return Err(ApiError::unauthorized());
     }
     info!("login OK: {} from {}", log_ident(&body.identifier), from);

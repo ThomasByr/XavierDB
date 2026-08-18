@@ -121,7 +121,11 @@ pub fn effective_ip(state: &AppState, headers: &HeaderMap, addr: &std::net::Sock
 
 /// Effective client address for LOGGING: the proxy header IP (no port — the
 /// proxy doesn't forward one), else the full socket peer `IP:PORT`.
-pub fn effective_addr(state: &AppState, headers: &HeaderMap, addr: &std::net::SocketAddr) -> String {
+pub fn effective_addr(
+    state: &AppState,
+    headers: &HeaderMap,
+    addr: &std::net::SocketAddr,
+) -> String {
     if state.trust_proxy_headers {
         if let Some(ip) = proxy_ip(headers) {
             return ip.to_string();
@@ -1027,7 +1031,9 @@ mod tests {
             "8.8.8.8"
         );
         assert_eq!(
-            proxy_ip(&hdr("x-forwarded-for", "::1")).unwrap().to_string(),
+            proxy_ip(&hdr("x-forwarded-for", "::1"))
+                .unwrap()
+                .to_string(),
             "::1"
         );
         // garbage / empty / absent headers yield None

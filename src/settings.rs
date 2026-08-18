@@ -239,7 +239,8 @@ pub fn load() -> ServerSettings {
         s.network.mongodb_uri = v;
     }
     if let Some(v) = env_str("TRUST_PROXY_HEADERS") {
-        s.network.trust_proxy_headers = matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes");
+        s.network.trust_proxy_headers =
+            matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes");
     }
     if let Some(v) = env_str("TLS_CERT_PATH") {
         s.tls.cert_path = v;
