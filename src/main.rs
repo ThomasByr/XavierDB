@@ -360,6 +360,7 @@ async fn run(max_workers: usize, settings: ServerSettings) {
     let port = settings.network.port;
     let max_insert_batch = settings.runtime.max_insert_batch;
     let mongodb_uri = settings.network.mongodb_uri.clone();
+    let find_timeout_ms = settings.runtime.find_timeout_ms;
 
     // --- config + perms ---
     let config_path = PathBuf::from("config");
@@ -470,6 +471,7 @@ async fn run(max_workers: usize, settings: ServerSettings) {
         max_insert_batch,
         dash_login_max_per_min,
         settings.network.trust_proxy_headers,
+        settings.runtime.find_timeout_ms,
     );
 
     use tracing_subscriber::layer::{Layer, SubscriberExt};
@@ -499,7 +501,7 @@ async fn run(max_workers: usize, settings: ServerSettings) {
         std::process::exit(1);
     });
     info!(
-        "XavierDB listening on {addr} ({} workers, mongo={mongodb_uri}, tls={https})",
+        "XavierDB listening on {addr} ({} workers, mongo={mongodb_uri}, tls={https}, find_timeout={find_timeout_ms}ms)",
         max_workers
     );
 

@@ -77,6 +77,9 @@ pub struct AppState {
     /// network.trust_proxy_headers; enable only behind a reverse proxy —
     /// see settings.rs).
     pub trust_proxy_headers: bool,
+    /// Server-side deadline for MongoDB find queries in ms (server.yml
+    /// runtime.find_timeout_ms; 0 = disabled). Enforced in dbq::find_page.
+    pub find_timeout_ms: u64,
 }
 
 impl AppState {
@@ -94,6 +97,7 @@ impl AppState {
         max_insert_batch: usize,
         dash_login_max_per_min: u32,
         trust_proxy_headers: bool,
+        find_timeout_ms: u64,
     ) -> Arc<Self> {
         Arc::new(Self {
             config: RwLock::new(config),
@@ -126,6 +130,7 @@ impl AppState {
             max_insert_batch,
             dash_login_max_per_min,
             trust_proxy_headers,
+            find_timeout_ms,
         })
     }
 }

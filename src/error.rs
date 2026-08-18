@@ -39,6 +39,9 @@ pub enum ApiErrorKind {
     Internal,
     /// 503 — MongoDB unreachable / degraded
     Unavailable,
+    /// 504 — a database operation exceeded the configured deadline
+    /// (server.yml runtime.find_timeout_ms)
+    Timeout,
 }
 
 impl ApiErrorKind {
@@ -54,6 +57,7 @@ impl ApiErrorKind {
             TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
             Internal => StatusCode::INTERNAL_SERVER_ERROR,
             Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Timeout => StatusCode::GATEWAY_TIMEOUT,
         }
     }
 
@@ -74,6 +78,7 @@ impl ApiErrorKind {
             TooManyRequests => "TOO_MANY_REQUESTS",
             Internal => "INTERNAL_ERROR",
             Unavailable => "UNAVAILABLE",
+            Timeout => "TIMEOUT",
         }
     }
 }

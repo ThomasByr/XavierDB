@@ -25,6 +25,7 @@ fields always yields the JSON error shape above.
 | 429 | `TOO_MANY_REQUESTS` | auth brute-force throttle (per peer socket IP) |
 | 500 | `INTERNAL_ERROR` | unexpected server error (generic message; details in the server log) |
 | 503 | `UNAVAILABLE` | MongoDB unreachable |
+| 504 | `TIMEOUT` | GET /q find exceeded the server-side deadline (`runtime.find_timeout_ms`, default 10 s) |
 
 ---
 
@@ -91,6 +92,12 @@ against the current `authorized_keys.yml`.
 The server caps `limit` at the **adaptive limit** of the caller's app
 (dashboard → Rate limit). When the cap bites, `truncated` is `true` and a
 `next_cursor` is returned so the client can keep iterating page by page.
+
+Queries run under a server-side deadline: a find that exceeds
+`runtime.find_timeout_ms` (server.yml, default 10 000 ms; `0` disables) fails
+with **504 `TIMEOUT`** instead of hanging until your own HTTP timeout fires.
+Treat 504 like 503 for retry purposes (back off, then retry — ideally after
+adding an index for the sort/filter).
 
 `projection` selects a subset of fields per document. The response documents
 contain only the requested fields when present (documents lacking a field

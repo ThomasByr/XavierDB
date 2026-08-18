@@ -69,6 +69,13 @@ pub struct RuntimeSettings {
     pub max_workers: usize,
     /// Max documents per insert batch (POST /q array `data`).
     pub max_insert_batch: usize,
+    /// Server-side deadline for MongoDB find queries (GET /q), in
+    /// milliseconds. A runaway query (e.g. a multiplanner blowup on an
+    /// unindexed sort over a huge collection) fails with a clean 504
+    /// TIMEOUT instead of hanging until the HTTP caller gives up and
+    /// severs the connection mid-operation. 0 disables; nonzero values
+    /// are clamped 100..=3_600_000.
+    pub find_timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -137,6 +144,7 @@ impl Default for RuntimeSettings {
         Self {
             max_workers: 4,
             max_insert_batch: crate::routes_q::MAX_INSERT_BATCH,
+            find_timeout_ms: 10_000,
         }
     }
 }
@@ -258,6 +266,11 @@ pub fn load() -> ServerSettings {
             s.runtime.max_insert_batch = n;
         }
     }
+    if let Some(v) = env_str("FIND_TIMEOUT_MS") {
+        if let Ok(n) = v.parse::<u64>() {
+            s.runtime.find_timeout_ms = n;
+        }
+    }
     if let Some(v) = env_str("LOG_FILES") {
         if let Ok(n) = v.parse::<usize>() {
             s.log.files = n;
@@ -301,6 +314,10 @@ impl ServerSettings {
         }
         if self.runtime.max_insert_batch == 0 {
             self.runtime.max_insert_batch = crate::routes_q::MAX_INSERT_BATCH;
+        }
+        // 0 = disabled; anything else must be a sane deadline
+        if self.runtime.find_timeout_ms != 0 {
+            self.runtime.find_timeout_ms = self.runtime.find_timeout_ms.clamp(100, 3_600_000);
         }
         self.log.files = self.log.files.clamp(1, 10);
         self.log.size_mb = self.log.size_mb.clamp(1, 20);
@@ -394,6 +411,21 @@ mod tests {
     }
 
     #[test]
+    fn find_timeout_clamp() {
+        let mut s = ServerSettings::default();
+        assert_eq!(s.runtime.find_timeout_ms, 10_000);
+        s.runtime.find_timeout_ms = 5;
+        s.clamp();
+        assert_eq!(s.runtime.find_timeout_ms, 100); // floor
+        s.runtime.find_timeout_ms = 9_999_999;
+        s.clamp();
+        assert_eq!(s.runtime.find_timeout_ms, 3_600_000); // ceiling
+        s.runtime.find_timeout_ms = 0;
+        s.clamp();
+        assert_eq!(s.runtime.find_timeout_ms, 0); // 0 = disabled, not floored
+    }
+
+    #[test]
     fn yaml_roundtrip_missing_fields_default() {
         let yaml = "network:\n  host: 0.0.0.0\n";
         let s: ServerSettings = serde_yaml::from_str(yaml).unwrap();
@@ -401,6 +433,7 @@ mod tests {
         assert_eq!(s.network.port, 8000); // from Default
         assert_eq!(s.admin.username, "admin");
         assert_eq!(s.log.files, 5);
+        assert_eq!(s.runtime.find_timeout_ms, 10_000); // from Default
     }
 
     #[test]

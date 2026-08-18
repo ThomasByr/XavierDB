@@ -44,6 +44,12 @@ runtime:
   # than this are rejected with 400 before reaching MongoDB. Default 1000;
   # must be >= 1 (MongoDB's own 100k write-batch limit still applies).
   max_insert_batch: 1000
+  # Server-side deadline for MongoDB find queries (GET /q), in milliseconds.
+  # A runaway query (e.g. an unindexed sort trialing plans on a huge
+  # collection) fails with a clean 504 TIMEOUT instead of hanging until the
+  # HTTP client gives up and severs the connection mid-operation. 0 disables
+  # the deadline. Default 10000; nonzero values clamped 100..=3600000.
+  find_timeout_ms: 10000
 
 # --- rotating log files (optional) ---
 # The server writes its logs to rotating files on disk: `xavierdb.log`

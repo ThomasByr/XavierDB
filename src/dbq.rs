@@ -750,6 +750,14 @@ pub fn build_filter(user: Option<Document>, cursor: Option<&Cursor>) -> Result<D
 // ---------------------------------------------------------------------------
 
 /// Run a paginated find. Returns (docs, has_more, next_cursor_values).
+///
+/// Enforces the server-side find deadline (`server.yml`
+/// runtime.find_timeout_ms, default 10 s): a runaway query — e.g. a
+/// multiplanner blowup on an unindexed sort over a huge collection — fails
+/// with a clean 504 TIMEOUT instead of hanging until the HTTP caller gives
+/// up and severs the connection mid-operation (leaving the Mongo log full
+/// of "Interrupted operation as its client disconnected" noise). 0 in the
+/// settings disables the deadline.
 pub async fn find_page(
     state: &AppState,
     db: &str,
@@ -759,6 +767,33 @@ pub async fn find_page(
     limit: u32,
     projection: Option<Document>,
     _user_cursor: Option<&Cursor>,
+) -> Result<(Vec<Document>, bool, Option<Document>), ApiError> {
+    if state.find_timeout_ms == 0 {
+        return find_page_inner(state, db, coll, filter, sort, limit, projection).await;
+    }
+    let ms = state.find_timeout_ms;
+    match tokio::time::timeout(
+        Duration::from_millis(ms),
+        find_page_inner(state, db, coll, filter, sort, limit, projection),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(_) => Err(ApiError::new(
+            ApiErrorKind::Timeout,
+            format!("database query timed out after {ms} ms"),
+        )),
+    }
+}
+
+async fn find_page_inner(
+    state: &AppState,
+    db: &str,
+    coll: &str,
+    filter: Document,
+    sort: &[(String, i8)],
+    limit: u32,
+    projection: Option<Document>,
 ) -> Result<(Vec<Document>, bool, Option<Document>), ApiError> {
     let collection = state.mongo.database(db).collection::<Document>(coll);
     let mut find = collection
@@ -1228,6 +1263,94 @@ pub async fn delete_many(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ConfigFile;
+    use crate::perms::PermissionsFile;
+
+    /// Minimal AppState for dbq-level tests (no config/perms watchers run
+    /// in unit tests, so defaults are fine).
+    fn test_state(client: mongodb::Client, find_timeout_ms: u64) -> std::sync::Arc<AppState> {
+        AppState::new(
+            ConfigFile::default(),
+            PermissionsFile::default(),
+            [0u8; 32],
+            false,
+            client,
+            "config.yml".into(),
+            "authorized_keys.yml".into(),
+            "admin".into(),
+            String::new(),
+            1000,
+            5,
+            false,
+            find_timeout_ms,
+        )
+    }
+
+    /// find_page must fail with a clean 504 TIMEOUT when the deadline
+    /// expires. Deliberately wait-free: the client points at a dead port,
+    /// so the find pends on driver server selection (30 s default) while
+    /// the 50 ms deadline fires — the test returns in ~50 ms, no sleeps.
+    #[tokio::test]
+    async fn find_page_deadline_is_a_clean_504() {
+        let client = mongodb::Client::with_uri_str("mongodb://127.0.0.1:1/")
+            .await
+            .unwrap();
+        let state = test_state(client, 50);
+        let started = std::time::Instant::now();
+        let err = find_page(&state, "db", "coll", Document::new(), &[], 10, None, None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind.status().as_u16(), 504);
+        assert_eq!(err.kind.code(), "TIMEOUT");
+        assert!(err.message.contains("timed out"), "msg: {}", err.message);
+        // returned at the deadline, not after the driver's 30 s selection timeout
+        assert!(started.elapsed().as_secs() < 5);
+    }
+
+    /// With the deadline disabled (0) and enabled-but-generous (10 s), a
+    /// normal query must succeed unchanged. Runs only when
+    /// XDB_TEST_MONGO_URI is set (scratch db, dropped afterwards).
+    #[test]
+    fn find_page_deadline_disabled_and_generous() {
+        let Ok(uri) = std::env::var("XDB_TEST_MONGO_URI") else {
+            eprintln!(
+                "skipping find_page_deadline_disabled_and_generous (XDB_TEST_MONGO_URI unset)"
+            );
+            return;
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let client = mongodb::Client::with_uri_str(&uri).await.unwrap();
+            let coll_name = format!("find_to_{}", std::process::id());
+            let coll = client
+                .database("xdb_test")
+                .collection::<Document>(&coll_name);
+            coll.drop().await.unwrap();
+            coll.insert_one(doc! {"_id": 1, "v": "x"}).await.unwrap();
+            for ms in [0u64, 10_000] {
+                let state = test_state(client.clone(), ms);
+                let (docs, has_more, _) = find_page(
+                    &state,
+                    "xdb_test",
+                    &coll_name,
+                    Document::new(),
+                    &[],
+                    10,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+                assert_eq!(docs.len(), 1, "find_timeout_ms={ms}");
+                assert!(!has_more, "find_timeout_ms={ms}");
+                assert_eq!(docs[0].get("v").unwrap(), &Bson::String("x".into()));
+            }
+            coll.drop().await.unwrap();
+        });
+    }
 
     #[test]
     fn bson_roundtrip() {
