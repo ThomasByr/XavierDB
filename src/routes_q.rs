@@ -655,6 +655,170 @@ pub async fn delete_docs(
 }
 
 // ---------------------------------------------------------------------------
+// GET/POST/DELETE /q/{db}/{coll}/indexes — list, ensure (idempotent), drop
+//
+// Permission model: GET = read the collection => see its indexes; ensure and
+// drop both require the dedicated INDEX action — a schema-level capability,
+// deliberately neither document-write (POST) nor document-delete (DELETE).
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct EnsureIndexBody {
+    pub keys: Value,
+    pub name: Option<String>,
+    pub unique: Option<bool>,
+    pub sparse: Option<bool>,
+    pub expire_after_seconds: Option<u64>,
+    pub partial_filter_expression: Option<Value>,
+}
+
+#[derive(Deserialize)]
+pub struct DropIndexBody {
+    pub name: String,
+}
+
+/// Index key document: non-empty object, each field 1 / -1 (JSON numbers
+/// arrive as Int64) or an index-type string ("text", "2dsphere", "hashed",
+/// ...). Everything else Mongo would reject server-side — fail with a clear
+/// 400 instead of a mapped driver error.
+fn parse_keys(v: &Value) -> Result<Document, ApiError> {
+    let b = dbq::json_to_bson(v).map_err(ApiError::bad_request)?;
+    let d = dbq::require_object(&b, "keys")?.clone();
+    if d.is_empty() {
+        return Err(ApiError::bad_request("keys must not be empty"));
+    }
+    for (f, dir) in &d {
+        let ok = match dir {
+            bson::Bson::Int32(i) => *i == 1 || *i == -1,
+            bson::Bson::Int64(i) => *i == 1 || *i == -1,
+            bson::Bson::String(_) => true,
+            _ => false,
+        };
+        if !ok {
+            return Err(ApiError::bad_request(format!(
+                "invalid direction for key {f:?}: use 1, -1 or an index-type string"
+            )));
+        }
+    }
+    Ok(d)
+}
+
+/// One index as JSON: name + keys always; option fields only when set on
+/// the server (keep the payload flat like the rest of /q).
+fn index_json(i: &dbq::IndexInfo) -> Value {
+    let mut o = json!({
+        "name": i.name,
+        "keys": dbq::bson_to_json(&bson::Bson::Document(i.keys.clone())),
+    });
+    if i.unique.unwrap_or(false) {
+        o["unique"] = json!(true);
+    }
+    if i.sparse.unwrap_or(false) {
+        o["sparse"] = json!(true);
+    }
+    if let Some(s) = i.expire_after_seconds {
+        o["expire_after_seconds"] = json!(s);
+    }
+    if let Some(p) = &i.partial_filter_expression {
+        o["partial_filter_expression"] = dbq::bson_to_json(&bson::Bson::Document(p.clone()));
+    }
+    o
+}
+
+pub async fn list_indexes(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((db, coll)): Path<(String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    let started = Instant::now();
+    check_path(&db, &coll)?;
+    let claims = authorize(&state, &headers, "GET", &db, &coll).await?;
+    let idx = dbq::list_indexes(&state, &db, &coll).await?;
+    let out: Vec<Value> = idx.iter().map(index_json).collect();
+    let n = out.len();
+    record_request(&state, &claims, started, 1);
+    Ok(Json(json!({ "indexes": out, "count": n })))
+}
+
+/// POST = ensure: 201 created / 200 already present / 409 same name or keys
+/// taken by an incompatible index.
+pub async fn ensure_index(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((db, coll)): Path<(String, String)>,
+    JsonBody(body): JsonBody<EnsureIndexBody>,
+) -> Result<(axum::http::StatusCode, Json<Value>), ApiError> {
+    let started = Instant::now();
+    check_path(&db, &coll)?;
+    let claims = authorize(&state, &headers, "INDEX", &db, &coll).await?;
+
+    let keys = parse_keys(&body.keys)?;
+    let partial_filter_expression = match &body.partial_filter_expression {
+        Some(v) => {
+            if has_script_operator(v) {
+                return Err(ApiError::new(
+                    ApiErrorKind::InvalidFilter,
+                    "server-side script operators ($where, $function) are not allowed",
+                ));
+            }
+            match dbq::json_to_bson(v).map_err(ApiError::bad_request)? {
+                bson::Bson::Document(d) => Some(d),
+                _ => {
+                    return Err(ApiError::bad_request(
+                        "partial_filter_expression must be a JSON object",
+                    ))
+                }
+            }
+        }
+        None => None,
+    };
+    if let Some(name) = &body.name {
+        if name.is_empty() {
+            return Err(ApiError::bad_request("index name must not be empty"));
+        }
+    }
+
+    let spec = dbq::IndexSpec {
+        keys,
+        name: body.name.clone(),
+        unique: body.unique,
+        sparse: body.sparse,
+        expire_after_seconds: body.expire_after_seconds,
+        partial_filter_expression,
+    };
+    let (status, payload) = match dbq::ensure_index(&state, &db, &coll, spec).await? {
+        dbq::EnsureOutcome::Created(name) => (
+            axum::http::StatusCode::CREATED,
+            json!({ "created": true, "name": name }),
+        ),
+        dbq::EnsureOutcome::Exists(name) => (
+            axum::http::StatusCode::OK,
+            json!({ "created": false, "name": name }),
+        ),
+    };
+    record_request(&state, &claims, started, 1);
+    Ok((status, Json(payload)))
+}
+
+/// DELETE = drop by name (the name GET returns; unambiguous round-trip).
+pub async fn drop_index(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((db, coll)): Path<(String, String)>,
+    JsonBody(body): JsonBody<DropIndexBody>,
+) -> Result<Json<Value>, ApiError> {
+    let started = Instant::now();
+    check_path(&db, &coll)?;
+    let claims = authorize(&state, &headers, "INDEX", &db, &coll).await?;
+    if body.name.is_empty() {
+        return Err(ApiError::bad_request("index name must not be empty"));
+    }
+    dbq::drop_index_by_name(&state, &db, &coll, &body.name).await?;
+    record_request(&state, &claims, started, 1);
+    Ok(Json(json!({ "deleted": true, "name": body.name })))
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 

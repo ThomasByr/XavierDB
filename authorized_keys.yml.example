@@ -16,7 +16,7 @@
 #                                 #   (Clients -> app -> "Set token")
 #                                 #   or with any argon2 tool.
 #     allow:                      # app-level rights (inherited by every name)
-#       - actions: [GET, POST]    #   one of GET, POST, PUT, PATCH, DELETE
+#       - actions: [GET, POST]    #   one of GET, POST, PUT, PATCH, DELETE, INDEX
 #         databases: ["db1", "db*"]   # glob patterns; * and ? are wildcards
 #         collections: ["*"]          # default is ["*"]
 #     deny: []                    # app-level carve-outs (checked first)

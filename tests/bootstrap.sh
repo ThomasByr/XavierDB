@@ -68,7 +68,7 @@ if [ -n "$MISSING" ]; then
   echo "creating apps:$MISSING"
   cat > "$CACHE_DIR/perms_payload.json" <<'JSON'
 {"apps":[
- {"app":"xdb_tb_main","set_token":"tb-main-secret-token","allow":[{"actions":["GET","POST","PUT","PATCH","DELETE"],"databases":["*"],"collections":["*"]}],"deny":[]},
+ {"app":"xdb_tb_main","set_token":"tb-main-secret-token","allow":[{"actions":["GET","POST","PUT","PATCH","DELETE","INDEX"],"databases":["*"],"collections":["*"]}],"deny":[]},
  {"app":"xdb_tb_restricted","set_token":"tb-restricted-token","allow":[{"actions":["GET"],"databases":["*"]}],"deny":[{"actions":["GET"],"databases":["xdb_tb_secret"]}]},
  {"app":"xdb_tb_ro","set_token":"tb-ro-secret-token","allow":[{"actions":["GET"],"databases":["xdb_tb_shared"]}],"deny":[]},
  {"app":"xdb_tb_m1","set_token":"tb-m1-secret-token","allow":[{"actions":["GET"],"databases":["xdb_tb_*"]},{"actions":["DELETE"],"databases":["xdb_tb_shared"]}],"deny":[{"actions":["GET"],"databases":["xdb_tb_secret"]}],"names":[{"name":"m1user","deny":[{"actions":["DELETE"],"databases":["xdb_tb_shared"]}]},{"name":"m1user2"}]},

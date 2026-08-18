@@ -206,6 +206,13 @@ fn build_router(state: Arc<AppState>) -> Router {
             .delete(routes_q::delete_docs),
     );
 
+    let q = q.route(
+        "/q/{db}/{coll}/indexes",
+        get(routes_q::list_indexes)
+            .post(routes_q::ensure_index)
+            .delete(routes_q::drop_index),
+    );
+
     let admin = Router::new()
         .route("/dashboard/api/login", post(routes_admin::login))
         .route("/dashboard/api/logout", post(routes_admin::logout))

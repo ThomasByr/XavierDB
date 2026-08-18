@@ -484,7 +484,7 @@ interface NamePerm { name: string; allow: Rule[]; deny: Rule[]; effective?: Effe
 interface AppPerm { app: string; token_set: boolean; allow: Rule[]; deny: Rule[]; effective?: EffectiveRule[]; names: NamePerm[]; delete?: boolean; set_token?: string }
 interface EffectiveRule { source: string; actions: string[]; databases: string[]; collections: string[] }
 
-const ACTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+const ACTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE", "INDEX"];
 
 let clientsSearch = "";
 let clientsExpanded: Set<string> = new Set();
@@ -1157,7 +1157,7 @@ function renderPermWidget(cont: HTMLElement, allow: Rule[], deny: Rule[], ctx: P
     return { cls: "inherit", title: `inherits database — ${base} — click to override` };
   };
 
-  /* the 5 action badges of one row */
+  /* the 6 action badges of one row */
   const rowBadges = (pat: string, entry: PermEntry | null | undefined, lock: string, dbLevel: boolean, coll?: string): HTMLElement => {
     const acts = el("span", { class: "acts" });
     for (const action of ACTIONS) {

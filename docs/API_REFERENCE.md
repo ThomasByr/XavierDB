@@ -189,11 +189,66 @@ Two modes — the single-document upsert and the batch upsert-many:
 Body: `{ "filter": object }` — delete all matching. `200`
 `{ "deleted_count": n }`, `404` when nothing matched.
 
+### GET /q/{db}/{coll}/indexes
+
+List the collection's indexes (needs `GET` permission on the collection).
+`404` when the collection does not exist.
+
+```json
+{ "indexes": [
+    { "name": "_id_", "keys": { "_id": 1 } },
+    { "name": "customer_created",
+      "keys": { "customer": 1, "created": -1 },
+      "unique": true,
+      "expire_after_seconds": 3600,
+      "partial_filter_expression": { "status": "active" } }
+  ],
+  "count": 2 }
+```
+
+Option fields appear only when set on the server (unique/sparse default to
+false, TTL/partial filter to none).
+
+### POST /q/{db}/{coll}/indexes — ensure an index
+
+Idempotent `createIndex` (needs the dedicated `INDEX` permission — a
+schema-level capability, granted separately from document writes).
+
+Body (flat):
+
+```json
+{ "keys": { "customer": 1, "created": -1 },
+  "name": "customer_created",
+  "unique": true,
+  "sparse": false,
+  "expire_after_seconds": 3600,
+  "partial_filter_expression": { "status": "active" } }
+```
+
+Only `keys` is required; each key value is `1`, `-1` or an index-type string
+(`"text"`, `"2dsphere"`, `"hashed"`, ...). Decision table:
+
+| situation | result |
+|---|---|
+| no index on those keys | `201` `{ "created": true, "name": ... }` |
+| same keys (any name), same options | `200` `{ "created": false, "name": <existing> }` |
+| same name, different keys | `409 CONFLICT` |
+| same keys, different options (unique/sparse/TTL/partial filter) | `409 CONFLICT` (changing a TTL needs `collMod` — refused) |
+
+### DELETE /q/{db}/{coll}/indexes — drop an index
+
+Body: `{ "name": "customer_created" }` (the name GET returns) — also needs
+the `INDEX` permission. `200` `{ "deleted": true, "name": ... }`; `404`
+when no index has that name; `400` for `_id_` (cannot be dropped) or an
+empty name.
+
 ### Notes
 
-- Permission actions map 1:1 to HTTP methods; a request needs
-  `action` on `db.coll` for the caller's effective rules
-  (see `authorized_keys.yml.example` for the resolution order).
+- Permission actions map 1:1 to HTTP methods for `/q/{db}/{coll}` — plus
+  the `INDEX` action, which governs ensure/drop on `/indexes` (reading
+  indexes uses plain `GET`). A request needs the action on `db.coll` for
+  the caller's effective rules (see `authorized_keys.yml.example` for
+  the resolution order).
 - Updates auto-wrap `data` in MongoDB `$set` (see above); pure inserts
   store the documents verbatim (extended-JSON tokens like `$oid`, `$date`,
   `$numberDecimal` are converted server-side).

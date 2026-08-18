@@ -24,7 +24,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const ACTIONS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+/// INDEX = manage indexes on a collection (ensure/drop via
+/// /q/{db}/{coll}/indexes) — a schema-level capability deliberately kept
+/// separate from document writes.
+pub const ACTIONS: [&str; 6] = ["GET", "POST", "PUT", "PATCH", "DELETE", "INDEX"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Rule {

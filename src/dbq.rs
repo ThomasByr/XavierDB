@@ -7,8 +7,11 @@ use bson::doc;
 use bson::oid::ObjectId;
 use bson::{Bson, DateTime, Document};
 use futures::TryStreamExt;
+use mongodb::IndexModel;
+use mongodb::options::IndexOptions;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Duration;
 
 use crate::error::{ApiError, ApiErrorKind};
 use crate::state::AppState;
@@ -882,6 +885,197 @@ pub async fn list_databases(state: &AppState) -> Result<Vec<String>, ApiError> {
 pub async fn list_collections(state: &AppState, db: &str) -> Result<Vec<String>, ApiError> {
     let names = state.mongo.database(db).list_collection_names().await?;
     Ok(names)
+}
+
+// ---------------------------------------------------------------------------
+// Indexes (GET/POST/DELETE /q/{db}/{coll}/indexes)
+// ---------------------------------------------------------------------------
+
+/// One index as exposed over the API (see routes_q index handlers).
+pub struct IndexInfo {
+    pub name: String,
+    pub keys: Document,
+    pub unique: Option<bool>,
+    pub sparse: Option<bool>,
+    pub expire_after_seconds: Option<u64>,
+    pub partial_filter_expression: Option<Document>,
+}
+
+/// What a client asked to ensure (fields as sent; None = not specified).
+pub struct IndexSpec {
+    pub keys: Document,
+    pub name: Option<String>,
+    pub unique: Option<bool>,
+    pub sparse: Option<bool>,
+    pub expire_after_seconds: Option<u64>,
+    pub partial_filter_expression: Option<Document>,
+}
+
+/// Result of ensure_index: freshly created vs already present (idempotent).
+pub enum EnsureOutcome {
+    Created(String),
+    Exists(String),
+}
+
+/// listIndexes on a missing collection fails with code 26 — surface it as
+/// a clean 404 instead of a 500.
+fn map_index_list_err(e: mongodb::error::Error) -> ApiError {
+    if let mongodb::error::ErrorKind::Command(ce) = e.kind.as_ref() {
+        if ce.code == 26 {
+            return ApiError::not_found("collection does not exist");
+        }
+    }
+    e.into()
+}
+
+fn index_info_from_model(m: IndexModel) -> IndexInfo {
+    let o = m.options.unwrap_or_default();
+    IndexInfo {
+        name: o.name.unwrap_or_default(),
+        keys: m.keys,
+        unique: o.unique,
+        sparse: o.sparse,
+        expire_after_seconds: o.expire_after.map(|d| d.as_secs()),
+        partial_filter_expression: o.partial_filter_expression,
+    }
+}
+
+pub async fn list_indexes(
+    state: &AppState,
+    db: &str,
+    coll: &str,
+) -> Result<Vec<IndexInfo>, ApiError> {
+    let mut cursor = state
+        .mongo
+        .database(db)
+        .collection::<Document>(coll)
+        .list_indexes()
+        .await
+        .map_err(map_index_list_err)?;
+    let mut out = Vec::new();
+    while let Some(m) = cursor.try_next().await.map_err(map_index_list_err)? {
+        out.push(index_info_from_model(m));
+    }
+    Ok(out)
+}
+
+/// Compare a requested option against the existing index, None defaulting
+/// to the server default (false / no TTL / no partial filter).
+fn options_match(spec: &IndexSpec, e: &IndexInfo) -> bool {
+    let b = |o: Option<bool>| o.unwrap_or(false);
+    b(spec.unique) == b(e.unique)
+        && b(spec.sparse) == b(e.sparse)
+        && spec.expire_after_seconds == e.expire_after_seconds
+        && spec.partial_filter_expression == e.partial_filter_expression
+}
+
+/// Idempotent createIndex: create when no compatible index exists, no-op
+/// when an equivalent one does, 409 when the same name (or same keys under
+/// a different name) is taken by an incompatible index. Equivalence =
+/// same key pattern + same options (unique/sparse/TTL/partial filter);
+/// same keys under any name always count as "the index already exists".
+pub async fn ensure_index(
+    state: &AppState,
+    db: &str,
+    coll: &str,
+    spec: IndexSpec,
+) -> Result<EnsureOutcome, ApiError> {
+    // a missing collection has no indexes yet; createIndexes creates it
+    let existing = match list_indexes(state, db, coll).await {
+        Ok(v) => v,
+        Err(e) if matches!(e.kind, crate::error::ApiErrorKind::NotFound) => Vec::new(),
+        Err(e) => return Err(e),
+    };
+
+    // same key pattern -> the index exists (Mongo never builds two indexes
+    // on the same key pattern); check the options for conflict
+    if let Some(e) = existing.iter().find(|e| e.keys == spec.keys) {
+        if !options_match(&spec, e) {
+            return Err(ApiError::new(
+                crate::error::ApiErrorKind::Conflict,
+                format!(
+                    "index '{}' already exists on the same keys with different options",
+                    e.name
+                ),
+            ));
+        }
+        return Ok(EnsureOutcome::Exists(e.name.clone()));
+    }
+    // same explicit name, different keys -> refuse loudly instead of
+    // silently shadowing someone else's index
+    if let Some(name) = &spec.name {
+        if existing.iter().any(|e| &e.name == name) {
+            return Err(ApiError::new(
+                crate::error::ApiErrorKind::Conflict,
+                format!("an index named '{name}' already exists with different keys"),
+            ));
+        }
+    }
+
+    let options = IndexOptions::builder()
+        .name(spec.name.clone())
+        .unique(spec.unique)
+        .sparse(spec.sparse)
+        .expire_after(spec.expire_after_seconds.map(Duration::from_secs))
+        .partial_filter_expression(spec.partial_filter_expression.clone())
+        .build();
+    let model = IndexModel::builder()
+        .keys(spec.keys.clone())
+        .options(options)
+        .build();
+    let r = state
+        .mongo
+        .database(db)
+        .collection::<Document>(coll)
+        .create_index(model)
+        .await
+        .map_err(|e| map_index_create_err(e, &spec))?;
+    Ok(EnsureOutcome::Created(r.index_name))
+}
+
+/// createIndexes client errors (67/85/86 = cannot build / options conflict,
+/// 118 = invalid specification) must not surface as 500.
+fn map_index_create_err(e: mongodb::error::Error, spec: &IndexSpec) -> ApiError {
+    if let mongodb::error::ErrorKind::Command(ce) = e.kind.as_ref() {
+        if matches!(ce.code, 67 | 85 | 86 | 118) {
+            return ApiError::new(
+                crate::error::ApiErrorKind::Conflict,
+                format!(
+                    "cannot ensure index{}: {}",
+                    spec.name
+                        .as_deref()
+                        .map(|n| format!(" '{n}'"))
+                        .unwrap_or_default(),
+                    crate::error::sanitize(&ce.message)
+                ),
+            );
+        }
+    }
+    e.into()
+}
+
+/// Drop an index by name. `_id_` cannot be dropped (400); an unknown name
+/// is a clean 404 (pre-checked — the raw driver error would be a 500).
+pub async fn drop_index_by_name(
+    state: &AppState,
+    db: &str,
+    coll: &str,
+    name: &str,
+) -> Result<(), ApiError> {
+    if name == "_id_" {
+        return Err(ApiError::bad_request("the _id_ index cannot be dropped"));
+    }
+    let existing = list_indexes(state, db, coll).await?;
+    if !existing.iter().any(|e| e.name == name) {
+        return Err(ApiError::not_found(format!("no index named '{name}'")));
+    }
+    state
+        .mongo
+        .database(db)
+        .collection::<Document>(coll)
+        .drop_index(name)
+        .await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
