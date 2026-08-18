@@ -249,6 +249,9 @@ empty name.
   indexes uses plain `GET`). A request needs the action on `db.coll` for
   the caller's effective rules (see `authorized_keys.yml.example` for
   the resolution order).
+- A runnable walkthrough of the index lifecycle (list → ensure →
+  conflicts → drop) lives in the `examples/` crate (`setup_indexes` +
+  `indexes`).
 - Updates auto-wrap `data` in MongoDB `$set` (see above); pure inserts
   store the documents verbatim (extended-JSON tokens like `$oid`, `$date`,
   `$numberDecimal` are converted server-side).
@@ -290,7 +293,7 @@ entry point is `POST /dashboard/api/login` (`{ "username", "password" }`).
 
 Both examples cover the same real-world flow: health check → auth → dataset
 listing → filtered/sorted query → insert / update / PUT / PATCH-upsert /
-DELETE → cursor exhaustion → error handling. They run against any XavierDB
+DELETE → index ensure/list/drop → cursor exhaustion → error handling. They run against any XavierDB
 instance (`XDB_BASE` overrides the URL).
 
 The credential in the examples only grants `GET` on `db1` in the stock
@@ -307,8 +310,8 @@ reported, not fatal. Grant the credential write actions on the collection
 // Env overrides: XDB_BASE, XDB_IDENTIFIER, XDB_TOKEN
 //
 // Covers: health check, auth, dataset listing, queries with filter/sort/limit,
-// insert / update / PUT / PATCH-upsert / DELETE, cursor exhaustion, and simple
-// error handling (401 / 403 / 404 / 503).
+// insert / update / PUT / PATCH-upsert / DELETE, index ensure/list/drop,
+// cursor exhaustion, and simple error handling (401 / 403 / 404 / 503).
 //
 // Permission note: the credential used below only grants GET on db1 in the
 // example authorized_keys.yml, so the write calls fail with 403 FORBIDDEN on
@@ -451,7 +454,28 @@ async function main() {
   } while (cursor);
   console.log(`cursor exhausted: ${total} docs in ${pages} page(s) at limit ${cap}`);
 
-  // 7. Simple error handling — a bad token produces a clean 401 UNAUTHORIZED.
+  // 7. Index management — listing needs plain GET; ensure/drop need the
+  //    dedicated INDEX permission. Ensure is idempotent: 201 just created /
+  //    200 already present / 409 same name or keys with different options.
+  //    Like the writes above, a read-only credential gets 403 here — handled.
+  const IDX = "/q/db1/items/indexes";
+  const idxList = await api(IDX, { bearer });
+  console.log(`indexes: ${idxList.data.indexes.map((i) => i.name).join(", ")}`);
+  const ensureIdx = await api(IDX, {
+    method: "POST",
+    bearer,
+    body: { keys: { tag: 1 }, name: "tag_1" },
+  });
+  logWrite("ensure index", ensureIdx, () =>
+    ensureIdx.status === 201 ? `created ${ensureIdx.data.name}` : `present ${ensureIdx.data.name}`);
+  const dropIdx = await api(IDX, {
+    method: "DELETE",
+    bearer,
+    body: { name: "tag_1" },
+  });
+  logWrite("drop index", dropIdx, () => `dropped ${dropIdx.data.name}`);
+
+  // 8. Simple error handling — a bad token produces a clean 401 UNAUTHORIZED.
   const bad = await api("/q/db1/items", { bearer: "garbage" });
   console.log(`bad token: ${friendly(bad.status, bad.data?.code)} (${bad.data?.code})`);
 }
@@ -475,8 +499,8 @@ main().catch((e) => {
 # Env overrides: XDB_BASE, XDB_IDENTIFIER, XDB_TOKEN
 #
 # Covers: health check, auth, dataset listing, queries with filter/sort/limit,
-# insert / update / PUT / PATCH-upsert / DELETE, cursor exhaustion, and simple
-# error handling (401 / 403 / 404 / 503).
+# insert / update / PUT / PATCH-upsert / DELETE, index ensure/list/drop,
+# cursor exhaustion, and simple error handling (401 / 403 / 404 / 503).
 #
 # Permission note: the credential used below only grants GET on db1 in the
 # example authorized_keys.yml, so the write calls fail with 403 FORBIDDEN on
@@ -613,7 +637,21 @@ def main():
         cursor = c["next_cursor"]
     print("cursor exhausted: %d docs in %d page(s) at limit %d" % (total, pages, cap))
 
-    # 7. Simple error handling - a bad token produces a clean 401 UNAUTHORIZED.
+    # 7. Index management - listing needs plain GET; ensure/drop need the
+    #    dedicated INDEX permission. Ensure is idempotent: 201 just created /
+    #    200 already present / 409 same name or keys with different options.
+    #    Like the writes above, a read-only credential gets 403 here - handled.
+    IDX = "/q/db1/items/indexes"
+    _, res = api(IDX, bearer=bearer)
+    print("indexes: %s" % ", ".join(i["name"] for i in res["indexes"]))
+    status, res = api(IDX, method="POST", bearer=bearer,
+                      body={"keys": {"tag": 1}, "name": "tag_1"})
+    log_write("ensure index", status, res,
+              lambda: ("created %s" if status == 201 else "present %s") % res["name"])
+    status, res = api(IDX, method="DELETE", bearer=bearer, body={"name": "tag_1"})
+    log_write("drop index", status, res, lambda: "dropped %s" % res["name"])
+
+    # 8. Simple error handling - a bad token produces a clean 401 UNAUTHORIZED.
     status, bad = api("/q/db1/items", bearer="garbage")
     print("bad token: %s (%s)" % (friendly(status, bad.get("code")), bad.get("code")))
 
