@@ -32,24 +32,36 @@
 
 ## Quick start (Docker)
 
-Prerequisites: Docker with Compose v2+ (e.g. Docker Desktop).
-
-```bash
-docker compose -f compose.yaml up --build -d
-```
-
-Restarting the API:
-
-```bash
-docker compose -f compose.yaml build --no-cache api
-docker compose -f compose.yaml up -d
-```
-
-State persists on the host:
-
 > [!NOTE]
 > Put your MongoDB data in `{HOME}/data/xavier-mongo-db` or edit
 > [compose.yaml](compose.yaml) to change the volume mount.
+
+Create your config files from the examples (edit if needed - defaults will work):
+
+```bash
+cp .env.example .env
+cp server.yml.example server.yml
+touch authorized_keys.yml
+```
+
+Prerequisites: Docker with Compose v2+ (e.g. Docker Desktop).
+
+```bash
+docker compose -f compose.yaml up -d
+```
+
+<details>
+<summary>Rebuild without cache</summary>
+
+```bash
+docker compose -f compose.yaml build --no-cache api
+```
+
+Then the usual `docker compose -f compose.yaml up -d` to restart the API.
+
+</details>
+
+State persists on the host:
 
 The API reads the repo's `server.yml` (created from `server.yml.example` on
 first boot). If `admin.password_hash` is blank, the admin dashboard password
