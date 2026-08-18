@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+
+# Dev-only image for compose.override.yaml — NOT used for production.
+#
+# Provides: rust toolchain + the build deps aws-lc-sys needs (same set as the
+# prod Dockerfile) + cargo-watch, all BAKED IN at build time. The app itself
+# is NOT baked in — the dev loop compiles it inside the container from the
+# bind-mounted repo (`cargo watch -x 'run --release'`).
+#
+# Why cargo install and not apt-get: cargo-watch is a cargo crate, not a
+# Debian package (the old override's `apt-get install cargo-watch` could
+# never work — and running apt as the non-root runtime user crash-loops).
+#
+# Why the /cargo-home + chown dance: the runtime user is non-root
+# (compose `user: $UID:$GID`, 1000:1000 in .env). Cargo needs a WRITABLE
+# CARGO_HOME (registry index downloads, ~/.cargo locks). The rust image's
+# default /usr/local/cargo is root-owned, so the override points CARGO_HOME
+# at /cargo-home, pre-created here for uid 1000 — the cargo-cache named
+# volume mounts under it and inherits that ownership on first use.
+FROM rust:1-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        cmake \
+        curl \
+        perl \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/* \
+    && cargo install cargo-watch --locked \
+    && mkdir -p /cargo-home/registry /cargo-home/git /app/target \
+    && chown -R 1000:1000 /cargo-home /app
+
+WORKDIR /app
