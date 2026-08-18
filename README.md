@@ -15,13 +15,14 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?logo=gitbook&logoColor=white)](https://opensource.org/licenses/MIT)
 [![GitHub profile](https://img.shields.io/badge/GitHub-ThomasByr-181717?logo=github&logoColor=white)](https://github.com/ThomasByr)
 
-| Method                    | Path             | Purpose                                                      |
-| ------------------------- | ---------------- | ------------------------------------------------------------ |
-| POST                      | `/auth`          | client login  -> JWT (+ HttpOnly cookie)                     |
-| GET/POST/PUT/PATCH/DELETE | `/q/<db>/<coll>` | MongoDB proxy                                                |
-| GET                       | `/ls`            | list databases the caller may read (?db=<db> -> collections) |
-| GET                       | `/dashboard/`    | admin dashboard (login protected)                            |
-| GET                       | `/health`        | cached health document (public)                              |
+| Method                    | Path                     | Purpose                                                      |
+| ------------------------- | ------------------------ | ------------------------------------------------------------ |
+| POST                      | `/auth`                  | client login  -> JWT (+ HttpOnly cookie)                     |
+| GET/POST/PUT/PATCH/DELETE | `/q/<db>/<coll>`         | MongoDB proxy                                                |
+| GET/POST/DELETE           | `/q/<db>/<coll>/indexes` | index list / ensure (idempotent) / drop (`INDEX` permission) |
+| GET                       | `/ls`                    | list databases the caller may read (?db=<db> -> collections) |
+| GET                       | `/dashboard/`            | admin dashboard (login protected)                            |
+| GET                       | `/health`                | cached health document (public)                              |
 
 1. [Quick start (Docker)](#quick-start-docker)
 2. [Documentation](#documentation)
@@ -34,14 +35,14 @@
 Prerequisites: Docker with Compose v2+ (e.g. Docker Desktop).
 
 ```bash
-docker compose up --build -d
+docker compose -f compose.yaml up --build -d
 ```
 
 Restarting the API:
 
 ```bash
-docker compose build --no-cache api
-docker compose up -d
+docker compose -f compose.yaml build --no-cache api
+docker compose -f compose.yaml up -d
 ```
 
 State persists on the host:
@@ -56,7 +57,7 @@ is **generated and printed once** in the API container logs (it is hashed
 into `server.yml` — `admin.username` defaults to `admin`):
 
 ```bash
-docker compose logs api
+docker compose -f compose.yaml logs api
 ```
 
 <details>
@@ -133,9 +134,11 @@ Read more in the [examples](examples/README.md) README.
 ## Development
 
 ```bash
-docker compose watch      # rebuilds the API image on Cargo.toml/src changes
+docker compose -f compose.yaml watch    # rebuilds the API image on Cargo.toml/src changes
 # or, manually (incremental; clean rebuild: docker compose build --no-cache api):
-docker compose up --build -d
+docker compose -f compose.yaml up --build -d
+# dev hot-reload loop (compile + run INSIDE the container; uses the override):
+docker compose up -d --build api
 ```
 
 <details>
