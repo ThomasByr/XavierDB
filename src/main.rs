@@ -51,7 +51,10 @@ where
         loop {
             let task = tokio::spawn(factory());
             if task.await.is_err() {
-                crate::state::log_line("ERROR", &format!("[{name}] background loop panicked — restarting"));
+                crate::state::log_line(
+                    "ERROR",
+                    &format!("[{name}] background loop panicked — restarting"),
+                );
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
@@ -73,14 +76,20 @@ where
         let mut watcher = match RecommendedWatcher::new(tx, Config::default()) {
             Ok(w) => w,
             Err(e) => {
-                crate::state::log_line("ERROR", &format!("[watch] cannot watch {}: {e}", path.display()));
+                crate::state::log_line(
+                    "ERROR",
+                    &format!("[watch] cannot watch {}: {e}", path.display()),
+                );
                 return;
             }
         };
         if watcher.watch(&path, RecursiveMode::NonRecursive).is_err() {
             crate::state::log_line(
                 "WARN",
-                &format!("[watch] cannot watch {} (file may not exist yet)", path.display()),
+                &format!(
+                    "[watch] cannot watch {} (file may not exist yet)",
+                    path.display()
+                ),
             );
             return;
         }
@@ -285,7 +294,10 @@ fn main() {
     // panics go to the dashboard log ring too (the console keeps its default
     // behavior via log_line's stderr echo)
     std::panic::set_hook(Box::new(|info| {
-        let thread = std::thread::current().name().unwrap_or("<unnamed>").to_string();
+        let thread = std::thread::current()
+            .name()
+            .unwrap_or("<unnamed>")
+            .to_string();
         let loc = info
             .location()
             .map(|l| format!(" at {}:{}:{}", l.file(), l.line(), l.column()))
@@ -296,7 +308,10 @@ fn main() {
             .map(|s| s.to_string())
             .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.clone()))
             .unwrap_or_else(|| "Box<dyn Any>".to_string());
-        crate::state::log_line("ERROR", &format!("thread '{thread}' panicked{loc}:\n{payload}"));
+        crate::state::log_line(
+            "ERROR",
+            &format!("thread '{thread}' panicked{loc}:\n{payload}"),
+        );
     }));
 
     // one shared crypto provider for rustls + jsonwebtoken (ring is already
@@ -310,18 +325,24 @@ fn main() {
     crate::state::init_log_files(settings.log.files, settings.log.size_mb);
     // runs before the tokio runtime exists (writes back into server.yml)
     if let Some(password) = settings.bootstrap_admin_password() {
-        crate::state::log_stdout("INFO", "================================================================");
-        crate::state::log_stdout("INFO", "[admin] generated a new dashboard password (shown ONCE):");
-        crate::state::log_stdout("INFO", &format!("    {password}"));
         crate::state::log_stdout(
             "INFO",
-            &format!("username : {}", settings.admin.username),
+            "================================================================",
         );
+        crate::state::log_stdout(
+            "INFO",
+            "[admin] generated a new dashboard password (shown ONCE):",
+        );
+        crate::state::log_stdout("INFO", &format!("    {password}"));
+        crate::state::log_stdout("INFO", &format!("username : {}", settings.admin.username));
         crate::state::log_stdout(
             "INFO",
             "(stored in server.yml as admin.password_hash — you can change it there)",
         );
-        crate::state::log_stdout("INFO", "================================================================");
+        crate::state::log_stdout(
+            "INFO",
+            "================================================================",
+        );
     }
 
     let max_workers = settings.runtime.max_workers;
@@ -355,14 +376,20 @@ async fn run(max_workers: usize, settings: ServerSettings) {
         Ok(text) => match PermissionsFile::parse(&text) {
             Ok(p) => p,
             Err(e) => {
-                crate::state::log_line("ERROR", &format!("[perms] {e} — starting with no permissions"));
+                crate::state::log_line(
+                    "ERROR",
+                    &format!("[perms] {e} — starting with no permissions"),
+                );
                 PermissionsFile::default()
             }
         },
         Err(_) => PermissionsFile::default(),
     };
     if perms.validate().is_err() {
-        crate::state::log_line("WARN", "[perms] warning: authorized_keys.yml has validation problems");
+        crate::state::log_line(
+            "WARN",
+            "[perms] warning: authorized_keys.yml has validation problems",
+        );
     }
 
     // --- JWT secret ---
@@ -392,15 +419,20 @@ async fn run(max_workers: usize, settings: ServerSettings) {
     };
 
     // --- TLS ---
-    let cert = (!settings.tls.cert_path.trim().is_empty())
-        .then(|| PathBuf::from(&settings.tls.cert_path));
-    let key = (!settings.tls.key_path.trim().is_empty())
-        .then(|| PathBuf::from(&settings.tls.key_path));
+    let cert =
+        (!settings.tls.cert_path.trim().is_empty()).then(|| PathBuf::from(&settings.tls.cert_path));
+    let key =
+        (!settings.tls.key_path.trim().is_empty()).then(|| PathBuf::from(&settings.tls.key_path));
     let (tls_state, https) = match (cert, key) {
         (Some(cert), Some(key)) => match tls::TlsState::new(cert, key) {
             Ok(ts) => (Some(Arc::new(ts)), true),
             Err(e) => {
-                crate::state::log_line("WARN", &format!("[tls] TLS configured but unusable ({e}) — falling back to plain HTTP"));
+                crate::state::log_line(
+                    "WARN",
+                    &format!(
+                        "[tls] TLS configured but unusable ({e}) — falling back to plain HTTP"
+                    ),
+                );
                 (None, false)
             }
         },

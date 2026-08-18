@@ -26,7 +26,10 @@ fn login_ok() {
     let expected = h["constants"]["jwt_token_lifetime_seconds"]
         .as_u64()
         .expect("constants.jwt_token_lifetime_seconds in /health");
-    assert_eq!(body["expires_in"], expected, "expires_in must match the config lifetime");
+    assert_eq!(
+        body["expires_in"], expected,
+        "expires_in must match the config lifetime"
+    );
     assert_eq!(body["identifier"], "tester@xdb_tb_main");
 }
 

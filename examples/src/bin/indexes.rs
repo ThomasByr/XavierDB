@@ -89,7 +89,9 @@ fn main() {
         "POST",
         &format!("{base}/q/{DB}/{COLL}"),
         Some(&jwt),
-        Some(json!({ "data": { "_id": "o3", "customer": "c2", "created": "2026-08-20", "email": "c1@x.io" } })),
+        Some(
+            json!({ "data": { "_id": "o3", "customer": "c2", "created": "2026-08-20", "email": "c1@x.io" } }),
+        ),
     );
     println!("\ninsert duplicate email (blocked by uniq_email) -> {status}");
     println!("  error: {}", body["error"]);
@@ -125,7 +127,9 @@ fn main() {
         "POST",
         &idx_url,
         Some(&jwt),
-        Some(json!({ "keys": { "expires_at": 1 }, "name": "ttl_expires", "expire_after_seconds": 86400 })),
+        Some(
+            json!({ "keys": { "expires_at": 1 }, "name": "ttl_expires", "expire_after_seconds": 86400 }),
+        ),
     );
     println!("\nPOST ensure ttl_expires {{expires_at:1}} TTL 86400s -> {status}");
     pprint(&body);

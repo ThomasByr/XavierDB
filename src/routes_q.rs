@@ -766,7 +766,7 @@ pub async fn ensure_index(
                 _ => {
                     return Err(ApiError::bad_request(
                         "partial_filter_expression must be a JSON object",
-                    ))
+                    ));
                 }
             }
         }

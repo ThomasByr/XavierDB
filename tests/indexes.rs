@@ -12,16 +12,14 @@ fn uniq(prefix: &str) -> String {
 }
 
 fn get_idx(agent: &ureq::Agent, jwt: &str, db: &str, coll: &str) -> (u16, Value) {
-    get(agent, &format!("{}/q/{db}/{coll}/indexes", base()), Some(jwt))
+    get(
+        agent,
+        &format!("{}/q/{db}/{coll}/indexes", base()),
+        Some(jwt),
+    )
 }
 
-fn ensure_idx(
-    agent: &ureq::Agent,
-    jwt: &str,
-    db: &str,
-    coll: &str,
-    body: &Value,
-) -> (u16, Value) {
+fn ensure_idx(agent: &ureq::Agent, jwt: &str, db: &str, coll: &str, body: &Value) -> (u16, Value) {
     post(
         agent,
         &format!("{}/q/{db}/{coll}/indexes", base()),
@@ -90,7 +88,13 @@ fn ensure_lifecycle() {
     assert_eq!(b["name"], "cust_at");
 
     // same keys, no explicit name -> still "exists"
-    let (s, b) = ensure_idx(&agent, &jwt, DB_SHARED, &coll, &json!({ "keys": { "customer": 1, "at": -1 } }));
+    let (s, b) = ensure_idx(
+        &agent,
+        &jwt,
+        DB_SHARED,
+        &coll,
+        &json!({ "keys": { "customer": 1, "at": -1 } }),
+    );
     assert_eq!(s, 200, "{b}");
     assert_eq!(b["created"], false);
     assert_eq!(b["name"], "cust_at");
@@ -103,15 +107,33 @@ fn ensure_conflicts() {
     let jwt = jwt("main");
     let coll = uniq("idx_conf");
 
-    let _ = ensure_idx(&agent, &jwt, DB_SHARED, &coll, &json!({ "keys": { "a": 1 }, "name": "a_idx" }));
+    let _ = ensure_idx(
+        &agent,
+        &jwt,
+        DB_SHARED,
+        &coll,
+        &json!({ "keys": { "a": 1 }, "name": "a_idx" }),
+    );
 
     // same name, different keys -> 409
-    let (s, b) = ensure_idx(&agent, &jwt, DB_SHARED, &coll, &json!({ "keys": { "b": 1 }, "name": "a_idx" }));
+    let (s, b) = ensure_idx(
+        &agent,
+        &jwt,
+        DB_SHARED,
+        &coll,
+        &json!({ "keys": { "b": 1 }, "name": "a_idx" }),
+    );
     assert_eq!(s, 409, "{b}");
     assert_eq!(err_code(&b), "CONFLICT");
 
     // same keys, different options -> 409
-    let (s, b) = ensure_idx(&agent, &jwt, DB_SHARED, &coll, &json!({ "keys": { "a": 1 }, "unique": true }));
+    let (s, b) = ensure_idx(
+        &agent,
+        &jwt,
+        DB_SHARED,
+        &coll,
+        &json!({ "keys": { "a": 1 }, "unique": true }),
+    );
     assert_eq!(s, 409, "{b}");
     assert_eq!(err_code(&b), "CONFLICT");
 }
@@ -164,7 +186,10 @@ fn ensure_ttl_and_options() {
     let (s, b) = get_idx(&agent, &jwt, DB_SHARED, &coll);
     assert_eq!(s, 200, "{b}");
     let part = find_index(&b, "part").expect("part index listed");
-    assert_eq!(part["partial_filter_expression"], json!({ "status": "active" }));
+    assert_eq!(
+        part["partial_filter_expression"],
+        json!({ "status": "active" })
+    );
     let ttl = find_index(&b, "ttl").expect("ttl index listed");
     assert_eq!(ttl["expire_after_seconds"], json!(3600));
 }
@@ -177,7 +202,13 @@ fn ensure_validation() {
     let coll = uniq("idx_valid");
 
     // bad direction
-    let (s, b) = ensure_idx(&agent, &jwt, DB_SHARED, &coll, &json!({ "keys": { "a": 2 } }));
+    let (s, b) = ensure_idx(
+        &agent,
+        &jwt,
+        DB_SHARED,
+        &coll,
+        &json!({ "keys": { "a": 2 } }),
+    );
     assert_eq!(s, 400, "{b}");
     // empty keys
     let (s, b) = ensure_idx(&agent, &jwt, DB_SHARED, &coll, &json!({ "keys": {} }));
@@ -186,7 +217,13 @@ fn ensure_validation() {
     let (s, b) = ensure_idx(&agent, &jwt, DB_SHARED, &coll, &json!({ "keys": [1, 2] }));
     assert_eq!(s, 400, "{b}");
     // string direction is a valid index type (text)
-    let (s, b) = ensure_idx(&agent, &jwt, DB_SHARED, &coll, &json!({ "keys": { "note": "text" } }));
+    let (s, b) = ensure_idx(
+        &agent,
+        &jwt,
+        DB_SHARED,
+        &coll,
+        &json!({ "keys": { "note": "text" } }),
+    );
     assert_eq!(s, 201, "{b}");
 }
 
@@ -217,7 +254,13 @@ fn drop_flow() {
     let jwt = jwt("main");
     let coll = uniq("idx_drop");
 
-    let _ = ensure_idx(&agent, &jwt, DB_SHARED, &coll, &json!({ "keys": { "a": 1 }, "name": "droppable" }));
+    let _ = ensure_idx(
+        &agent,
+        &jwt,
+        DB_SHARED,
+        &coll,
+        &json!({ "keys": { "a": 1 }, "name": "droppable" }),
+    );
 
     let (s, b) = drop_idx(&agent, &jwt, DB_SHARED, &coll, "droppable");
     assert_eq!(s, 200, "{b}");
@@ -247,7 +290,13 @@ fn index_permissions() {
     let agent = agent();
     let main = jwt("main");
     let coll = uniq("idx_perm");
-    let _ = ensure_idx(&agent, &main, DB_SHARED, &coll, &json!({ "keys": { "a": 1 } }));
+    let _ = ensure_idx(
+        &agent,
+        &main,
+        DB_SHARED,
+        &coll,
+        &json!({ "keys": { "a": 1 } }),
+    );
 
     // GET-only app: can LIST (read implies seeing indexes)...
     let reader = jwt("reader");
@@ -255,7 +304,13 @@ fn index_permissions() {
     assert_eq!(s, 200, "{b}");
 
     // ...but not ensure or drop (INDEX is a separate, default-deny action)
-    let (s, b) = ensure_idx(&agent, &reader, DB_SHARED, &coll, &json!({ "keys": { "b": 1 } }));
+    let (s, b) = ensure_idx(
+        &agent,
+        &reader,
+        DB_SHARED,
+        &coll,
+        &json!({ "keys": { "b": 1 } }),
+    );
     assert_eq!(s, 403, "{b}");
     assert_eq!(err_code(&b), "FORBIDDEN");
     let (s, b) = drop_idx(&agent, &reader, DB_SHARED, &coll, "a_1");
@@ -269,7 +324,11 @@ fn index_error_contract() {
     let agent = agent();
     let _jwt = jwt("main");
     // unauthenticated -> 401 standard body
-    let (s, b) = get(&agent, &format!("{}/q/{DB_SHARED}/seed/indexes", base()), None);
+    let (s, b) = get(
+        &agent,
+        &format!("{}/q/{DB_SHARED}/seed/indexes", base()),
+        None,
+    );
     assert_eq!(s, 401, "{b}");
     assert_eq!(err_code(&b), "UNAUTHORIZED");
     assert_eq!(err_status(&b), 401);

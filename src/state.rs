@@ -299,7 +299,11 @@ impl LogFileSink {
         let cur = s.dir.join(LOG_BASE);
         s.next_seq += count_lines(&cur);
         s.cur_bytes = std::fs::metadata(&cur).map(|m| m.len()).unwrap_or(0);
-        s.file = std::fs::OpenOptions::new().create(true).append(true).open(&cur).ok();
+        s.file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&cur)
+            .ok();
         s
     }
 
@@ -313,7 +317,10 @@ impl LogFileSink {
         }
         use std::io::Write;
         if let Some(f) = &mut self.file {
-            if f.write_all(line.as_bytes()).and_then(|_| f.write_all(b"\n")).is_ok() {
+            if f.write_all(line.as_bytes())
+                .and_then(|_| f.write_all(b"\n"))
+                .is_ok()
+            {
                 self.cur_bytes += add;
                 self.next_seq += 1;
             }
@@ -331,13 +338,27 @@ impl LogFileSink {
         let cur = self.dir.join(LOG_BASE);
         let _ = std::fs::rename(&cur, self.dir.join(format!("{LOG_BASE}.1")));
         self.cur_bytes = 0;
-        self.file = std::fs::OpenOptions::new().create(true).append(true).open(&cur).ok();
+        self.file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&cur)
+            .ok();
     }
 
     /// Entries in chronological order (oldest first). `limit` = max entries
     /// (0 = all); `before` = only entries with seq < before. Facets come from
     /// the last `max(limit, LOG_FACET_LINES)` lines (bounded scan).
-    fn read(&self, limit: usize, before: Option<u64>) -> (Vec<LogEntry>, u64, Vec<String>, Vec<(String, String)>, Vec<String>) {
+    fn read(
+        &self,
+        limit: usize,
+        before: Option<u64>,
+    ) -> (
+        Vec<LogEntry>,
+        u64,
+        Vec<String>,
+        Vec<(String, String)>,
+        Vec<String>,
+    ) {
         let total = self.next_seq;
         let mut paths: Vec<std::path::PathBuf> = Vec::new();
         for i in (1..self.files).rev() {
@@ -352,7 +373,11 @@ impl LogFileSink {
         }
         let counts: Vec<u64> = paths.iter().map(|p| count_lines(p)).collect();
         let mut collected: Vec<LogEntry> = Vec::new();
-        let mut want = if limit == 0 { usize::MAX } else { limit.max(LOG_FACET_LINES) };
+        let mut want = if limit == 0 {
+            usize::MAX
+        } else {
+            limit.max(LOG_FACET_LINES)
+        };
         'walk: for (idx, p) in paths.iter().enumerate().rev() {
             if want == 0 {
                 break;
@@ -366,7 +391,14 @@ impl LogFileSink {
                 }
                 let (level, logger, msg) = parse_level_msg(line);
                 let (name, app) = log_identify(&msg);
-                collected.push(LogEntry { seq, raw: line.clone(), level, logger, app, name });
+                collected.push(LogEntry {
+                    seq,
+                    raw: line.clone(),
+                    level,
+                    logger,
+                    app,
+                    name,
+                });
                 want -= 1;
                 if want == 0 {
                     break 'walk;
@@ -383,7 +415,12 @@ impl LogFileSink {
             .collect();
         let mut names: Vec<(String, String)> = collected
             .iter()
-            .filter_map(|e| e.app.as_ref().zip(e.name.as_ref()).map(|(a, n)| (a.clone(), n.clone())))
+            .filter_map(|e| {
+                e.app
+                    .as_ref()
+                    .zip(e.name.as_ref())
+                    .map(|(a, n)| (a.clone(), n.clone()))
+            })
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
@@ -396,13 +433,21 @@ impl LogFileSink {
         apps.sort();
         names.sort();
         loggers.sort();
-        let cut = if limit == 0 { 0 } else { collected.len().saturating_sub(limit) };
+        let cut = if limit == 0 {
+            0
+        } else {
+            collected.len().saturating_sub(limit)
+        };
         let entries = collected.split_off(cut);
         (entries, total, apps, names, loggers)
     }
 
     fn retention(&self) -> (u32, u32, String) {
-        (self.files as u32, (self.size_bytes / (1024 * 1024)) as u32, LOG_BASE.to_string())
+        (
+            self.files as u32,
+            (self.size_bytes / (1024 * 1024)) as u32,
+            LOG_BASE.to_string(),
+        )
     }
 }
 
@@ -431,7 +476,13 @@ pub fn log_file_write(line: &str) {
 pub fn log_read(
     limit: usize,
     before: Option<u64>,
-) -> (Vec<LogEntry>, u64, Vec<String>, Vec<(String, String)>, Vec<String>) {
+) -> (
+    Vec<LogEntry>,
+    u64,
+    Vec<String>,
+    Vec<(String, String)>,
+    Vec<String>,
+) {
     match LOG_FILES.get() {
         Some(m) => match m.lock() {
             Ok(s) => s.read(limit, before),
@@ -443,14 +494,19 @@ pub fn log_read(
 
 pub fn log_retention() -> (u32, u32, String) {
     match LOG_FILES.get() {
-        Some(m) => m.lock().map(|s| s.retention()).unwrap_or((0, 0, String::new())),
+        Some(m) => m
+            .lock()
+            .map(|s| s.retention())
+            .unwrap_or((0, 0, String::new())),
         None => (0, 0, String::new()),
     }
 }
 
 fn count_lines(p: &std::path::Path) -> u64 {
     use std::io::Read;
-    let Ok(mut f) = std::fs::File::open(p) else { return 0 };
+    let Ok(mut f) = std::fs::File::open(p) else {
+        return 0;
+    };
     let mut buf = [0u8; 64 * 1024];
     let mut n = 0u64;
     loop {
@@ -523,7 +579,10 @@ pub fn log_push_raw(line: String) {
 
 /// "2026-08-14T13:59:50.912518Z  INFO XavierDB::routes_misc: msg" -> ("INFO", "XavierDB::routes_misc", "msg")
 fn parse_level_msg(line: &str) -> (String, String, String) {
-    let rest = line.split_once(' ').map(|(_, r)| r.trim_start()).unwrap_or(line);
+    let rest = line
+        .split_once(' ')
+        .map(|(_, r)| r.trim_start())
+        .unwrap_or(line);
     let (lvl, rest) = rest.split_once(' ').unwrap_or((rest, ""));
     let (logger, msg) = rest
         .split_once(": ")
@@ -575,7 +634,13 @@ fn log_identify(msg: &str) -> (Option<String>, Option<String>) {
 pub fn log_snapshot(
     limit: usize,
     before: Option<u64>,
-) -> (Vec<LogEntry>, u64, Vec<String>, Vec<(String, String)>, Vec<String>) {
+) -> (
+    Vec<LogEntry>,
+    u64,
+    Vec<String>,
+    Vec<(String, String)>,
+    Vec<String>,
+) {
     log_read(limit, before)
 }
 
@@ -610,7 +675,9 @@ mod tests {
         // 3 files × 120 bytes: ~6 lines of ~50 bytes per file before rotating
         let mut s = LogFileSink::new(dir.clone(), 3, 120);
         for i in 0..40 {
-            s.write(&format!("line {i:04} pppppppppppppppppppppppppppppppppppppppp"));
+            s.write(&format!(
+                "line {i:04} pppppppppppppppppppppppppppppppppppppppp"
+            ));
         }
         drop(s);
 
@@ -619,9 +686,18 @@ mod tests {
         let (entries, total, _, _, _) = s2.read(0, None);
         assert_eq!(total, 40, "total line count");
         assert_eq!(entries.len(), 40, "all lines readable");
-        assert_eq!(entries[0].raw, "line 0000 pppppppppppppppppppppppppppppppppppppppp");
-        assert_eq!(entries[39].raw, "line 0039 pppppppppppppppppppppppppppppppppppppppp");
-        assert!(entries.windows(2).all(|w| w[0].seq + 1 == w[1].seq), "seqs contiguous");
+        assert_eq!(
+            entries[0].raw,
+            "line 0000 pppppppppppppppppppppppppppppppppppppppp"
+        );
+        assert_eq!(
+            entries[39].raw,
+            "line 0039 pppppppppppppppppppppppppppppppppppppppp"
+        );
+        assert!(
+            entries.windows(2).all(|w| w[0].seq + 1 == w[1].seq),
+            "seqs contiguous"
+        );
         assert_eq!(entries[0].seq, 0, "seqs restart at 0 on a fresh store");
 
         // bounded: at most `files` files on disk
@@ -643,5 +719,5 @@ mod tests {
         assert!(page.iter().all(|e| e.seq < 10));
         assert_eq!(page[0].seq, 5, "last 5 before seq 10");
         let _ = std::fs::remove_dir_all(&dir);
-}
+    }
 }

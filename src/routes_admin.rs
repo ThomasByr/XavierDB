@@ -77,10 +77,16 @@ pub async fn login(
         .await
         .unwrap_or(false);
     if !user_ok || !ok {
-        tracing::warn!("admin login failed: {}", body.username.chars().take(60).collect::<String>());
+        tracing::warn!(
+            "admin login failed: {}",
+            body.username.chars().take(60).collect::<String>()
+        );
         return Err(ApiError::unauthorized());
     }
-    tracing::info!("admin login OK: {}", body.username.chars().take(60).collect::<String>());
+    tracing::info!(
+        "admin login OK: {}",
+        body.username.chars().take(60).collect::<String>()
+    );
     let token = create_admin_session(&state, &body.username);
     // cookie lifetime follows the server-side session TTL (configurable)
     let max_age = state

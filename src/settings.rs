@@ -135,7 +135,10 @@ impl Default for RuntimeSettings {
 
 impl Default for LogSettings {
     fn default() -> Self {
-        Self { files: 5, size_mb: 10 }
+        Self {
+            files: 5,
+            size_mb: 10,
+        }
     }
 }
 
@@ -182,7 +185,10 @@ pub fn load() -> ServerSettings {
                 &format!("[settings] could not create {SETTINGS_FILE}: {e}"),
             );
         } else {
-            crate::state::log_stdout("INFO", &format!("[settings] created {SETTINGS_FILE} from server.yml.example"));
+            crate::state::log_stdout(
+                "INFO",
+                &format!("[settings] created {SETTINGS_FILE} from server.yml.example"),
+            );
         }
     }
 
@@ -192,7 +198,9 @@ pub fn load() -> ServerSettings {
             Err(e) => {
                 crate::state::log_line(
                     "WARN",
-                    &format!("[settings] {SETTINGS_FILE} invalid ({e}) — using defaults + env overrides"),
+                    &format!(
+                        "[settings] {SETTINGS_FILE} invalid ({e}) — using defaults + env overrides"
+                    ),
                 );
                 ServerSettings::default()
             }
@@ -200,7 +208,9 @@ pub fn load() -> ServerSettings {
         Err(e) => {
             crate::state::log_line(
                 "WARN",
-                &format!("[settings] cannot read {SETTINGS_FILE} ({e}) — using defaults + env overrides"),
+                &format!(
+                    "[settings] cannot read {SETTINGS_FILE} ({e}) — using defaults + env overrides"
+                ),
             );
             ServerSettings::default()
         }
@@ -316,7 +326,10 @@ impl ServerSettings {
             }
         };
         if let Err(e) = update_password_hash(SETTINGS_FILE.as_ref(), &phc) {
-            crate::state::log_line("ERROR", &format!("[admin] could not write {SETTINGS_FILE}: {e}"));
+            crate::state::log_line(
+                "ERROR",
+                &format!("[admin] could not write {SETTINGS_FILE}: {e}"),
+            );
             return None;
         }
         self.admin.password_hash = phc;
@@ -411,7 +424,10 @@ mod tests {
         assert!(out.contains("# comment stays"));
         // and it round-trips back into the struct
         let s: ServerSettings = serde_yaml::from_str(&out).unwrap();
-        assert_eq!(s.admin.password_hash, "$argon2id$v=19$m=65536,t=3,p=4$salt$hash");
+        assert_eq!(
+            s.admin.password_hash,
+            "$argon2id$v=19$m=65536,t=3,p=4$salt$hash"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
