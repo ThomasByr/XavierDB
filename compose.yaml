@@ -1,8 +1,8 @@
 services:
-  xavierdb:
+  mongodb:
     restart: unless-stopped
     image: mongodb/mongodb-community-server:latest  # official MongoDB Community image
-    container_name: XavierDB
+    container_name: MongoDB
     user: ":"
     environment:
       - TZ=Europe/Paris
@@ -40,14 +40,14 @@ services:
       timeout: 10s
       start_period: 10s
       retries: 100
-  api:
+  xavierdb:
     restart: unless-stopped
     # No `image:` key on purpose: with both `build:` and `image:`, compose
     # tags the built image with that name — which would clobber the official
     # rust:1-slim-bookworm tag locally. The image is built FROM
-    # rust:1-slim-bookworm (see Dockerfile); compose names it <project>-api.
+    # rust:1-slim-bookworm (see Dockerfile); compose names it <project>-xavierdb.
     build: .
-    container_name: XavierAPI
+    container_name: XavierDB
     user: "$UID:$GID"                              # run as the host user, not root (UID/GID from .env)
     environment:
       - TZ=Europe/Paris
@@ -58,7 +58,7 @@ services:
       # port and "localhost" is the API container itself. `.env` is only
       # UID/GID (compose interpolation) — the app never reads it.
       - HOST=0.0.0.0                               # bind all interfaces inside the container
-      - MONGODB_URI=mongodb://xavierdb:27017       # mongo service name; default localhost won't work
+      - MONGODB_URI=mongodb://mongodb:27017       # mongo service name; default localhost won't work
     working_dir: /app
     volumes:
       - ".:/app"                                   # repo root = single source of truth: server.yml, config, config.bak, authorized_keys.yml
@@ -71,7 +71,7 @@ services:
           cpus: "2.0"
     memswap_limit: 2g
     depends_on:
-      xavierdb:
+      mongodb:
         condition: service_healthy
     healthcheck:
       # cheap local curl against the cached /health; the https fallback
