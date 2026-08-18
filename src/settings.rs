@@ -53,6 +53,13 @@ pub struct NetworkSettings {
     /// 0 is rejected (would bind an ephemeral port silently).
     pub port: u16,
     pub mongodb_uri: String,
+    /// Trust X-Real-IP / X-Forwarded-For from the reverse proxy in front.
+    /// Enable ONLY when the server is not directly reachable (e.g. the port
+    /// is bound to 127.0.0.1 and nginx forwards to it): then the proxy-set
+    /// headers are the real client IPs, used for the login throttles and
+    /// request log lines. When directly reachable, keep this OFF — the
+    /// headers are client-controlled and would allow throttle evasion.
+    pub trust_proxy_headers: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -120,6 +127,7 @@ impl Default for NetworkSettings {
             host: "127.0.0.1".to_string(),
             port: 8000,
             mongodb_uri: "mongodb://localhost:27017".to_string(),
+            trust_proxy_headers: false,
         }
     }
 }
@@ -229,6 +237,9 @@ pub fn load() -> ServerSettings {
     }
     if let Some(v) = env_str("MONGODB_URI") {
         s.network.mongodb_uri = v;
+    }
+    if let Some(v) = env_str("TRUST_PROXY_HEADERS") {
+        s.network.trust_proxy_headers = matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes");
     }
     if let Some(v) = env_str("TLS_CERT_PATH") {
         s.tls.cert_path = v;

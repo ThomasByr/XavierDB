@@ -469,6 +469,7 @@ async fn run(max_workers: usize, settings: ServerSettings) {
         settings.admin.password_hash.clone(),
         max_insert_batch,
         dash_login_max_per_min,
+        settings.network.trust_proxy_headers,
     );
 
     use tracing_subscriber::layer::{Layer, SubscriberExt};

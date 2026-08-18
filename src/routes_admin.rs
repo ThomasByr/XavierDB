@@ -53,13 +53,17 @@ pub struct LoginBody {
 pub async fn login(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
+    headers: HeaderMap,
     JsonBody(body): JsonBody<LoginBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // peer socket IP only — see routes_misc::auth_login (X-Forwarded-For is
-    // client-controlled and must not be trusted for throttling). Dashboard
+    // Client IP for throttling: proxy header IP when
+    // network.trust_proxy_headers is on (behind a reverse proxy), else the
+    // peer socket IP (X-Forwarded-For is client-controlled and must not be
+    // trusted unconditionally — see routes_misc::auth_login). Dashboard
     // login has its OWN throttle (server.yml admin.max_logins_per_ip_per_minute),
     // separate from the /auth throttle (config file).
-    let ip = addr.0.ip().to_string();
+    let ip = crate::routes_q::effective_ip(&state, &headers, &addr.0);
+    let from = crate::routes_q::effective_addr(&state, &headers, &addr.0);
     crate::auth::dash_throttled(&state, &ip)?;
 
     let password_hash = state.password_hash.clone();
@@ -78,14 +82,16 @@ pub async fn login(
         .unwrap_or(false);
     if !user_ok || !ok {
         tracing::warn!(
-            "admin login failed: {}",
-            body.username.chars().take(60).collect::<String>()
+            "admin login failed: {} from {}",
+            body.username.chars().take(60).collect::<String>(),
+            from
         );
         return Err(ApiError::unauthorized());
     }
     tracing::info!(
-        "admin login OK: {}",
-        body.username.chars().take(60).collect::<String>()
+        "admin login OK: {} from {}",
+        body.username.chars().take(60).collect::<String>(),
+        from
     );
     let token = create_admin_session(&state, &body.username);
     // cookie lifetime follows the server-side session TTL (configurable)

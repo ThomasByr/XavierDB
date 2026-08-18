@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{ConnectInfo, State};
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::json;
@@ -31,12 +32,16 @@ pub struct AuthBody {
 pub async fn auth_login(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
+    headers: HeaderMap,
     JsonBody(body): JsonBody<AuthBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // Throttle keys on the peer socket IP only: X-Forwarded-For is
-    // client-controlled, so trusting it would let a caller rotate the header
-    // to bypass the brute-force limit (no proxy exists in this deployment).
-    let ip = addr.0.ip().to_string();
+    // Throttle keys on the client IP: the proxy header IP when
+    // network.trust_proxy_headers is on (deployment behind a reverse proxy
+    // on localhost), else the peer socket IP — X-Forwarded-For is
+    // client-controlled, so trusting it without a proxy would let a caller
+    // rotate the header to bypass the brute-force limit.
+    let ip = crate::routes_q::effective_ip(&state, &headers, &addr.0);
+    let from = crate::routes_q::effective_addr(&state, &headers, &addr.0);
     if let Err(e) = auth_throttled(&state, &ip) {
         warn!("login throttled: {ip}");
         return Err(e);
@@ -45,7 +50,7 @@ pub async fn auth_login(
     let (name, app) = match parse_identifier(&body.identifier) {
         Some(p) => p,
         None => {
-            warn!("login failed: {}", log_ident(&body.identifier));
+            warn!("login failed: {} from {}", log_ident(&body.identifier), from);
             return Err(ApiError::unauthorized());
         }
     };
@@ -53,7 +58,11 @@ pub async fn auth_login(
     // blocked? (cheap check before the expensive hash; also makes the 403
     // independent of token correctness)
     if let Err(e) = crate::routes_q::check_block(&state, &name, &app) {
-        warn!("login blocked: {}", log_ident(&body.identifier));
+        warn!(
+            "login blocked: {} from {}",
+            log_ident(&body.identifier),
+            from
+        );
         return Err(e);
     }
 
@@ -72,10 +81,10 @@ pub async fn auth_login(
         .await
         .unwrap_or(false);
     if !ok {
-        warn!("login failed: {}", log_ident(&body.identifier));
+        warn!("login failed: {} from {}", log_ident(&body.identifier), from);
         return Err(ApiError::unauthorized());
     }
-    info!("login OK: {}", log_ident(&body.identifier));
+    info!("login OK: {} from {}", log_ident(&body.identifier), from);
 
     // first sight of this name_id -> make it editable in the file
     {

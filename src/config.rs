@@ -66,7 +66,7 @@ pub struct DashboardCfg {
     /// Number of samples used for client-side graph smoothing.
     pub graph_smoothing: u32,
     /// "info" | "debug" — verbosity of console + dashboard ring; debug adds
-    /// a per-request line (method, path, identity) for every /q and /ls call.
+    /// a per-request line (method, path, peer addr, identity) for every /q and /ls call.
     pub log_level: String,
     /// "system" | "light" | "dark"
     pub theme: String,

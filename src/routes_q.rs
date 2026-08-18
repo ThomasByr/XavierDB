@@ -17,7 +17,7 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{ConnectInfo, Path, State};
 use axum::http::HeaderMap;
 use bson::Document;
 use bson::doc;
@@ -79,10 +79,63 @@ pub fn check_block(state: &AppState, name: &str, app: &str) -> Result<(), ApiErr
     }
 }
 
+// ---------------------------------------------------------------------------
+// client IP (socket peer vs proxy headers)
+// ---------------------------------------------------------------------------
+
+/// The proxy-supplied client IP, when `network.trust_proxy_headers` is on:
+/// X-Real-IP (set verbatim by our nginx), else the LAST entry of
+/// X-Forwarded-For — the one appended by our own trusted proxy, which a
+/// client cannot influence (earlier entries are client-controlled and only
+/// informational). Values must parse as an IP; garbage is ignored.
+fn proxy_ip(headers: &HeaderMap) -> Option<std::net::IpAddr> {
+    if let Some(v) = headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        if let Ok(ip) = v.parse() {
+            return Some(ip);
+        }
+    }
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())?
+        .rsplit(',')
+        .next()
+        .map(str::trim)
+        .and_then(|v| v.parse().ok())
+}
+
+/// Effective client IP for THROTTLING (no port): the proxy header IP when
+/// trusted, else the socket peer IP.
+pub fn effective_ip(state: &AppState, headers: &HeaderMap, addr: &std::net::SocketAddr) -> String {
+    if state.trust_proxy_headers {
+        if let Some(ip) = proxy_ip(headers) {
+            return ip.to_string();
+        }
+    }
+    addr.ip().to_string()
+}
+
+/// Effective client address for LOGGING: the proxy header IP (no port — the
+/// proxy doesn't forward one), else the full socket peer `IP:PORT`.
+pub fn effective_addr(state: &AppState, headers: &HeaderMap, addr: &std::net::SocketAddr) -> String {
+    if state.trust_proxy_headers {
+        if let Some(ip) = proxy_ip(headers) {
+            return ip.to_string();
+        }
+    }
+    addr.to_string()
+}
+
 /// Authenticate + permission check for a specific (action, db, coll).
+/// `addr` is the peer socket address, logged on the debug trace line.
 pub async fn authorize(
     state: &AppState,
     headers: &HeaderMap,
+    addr: &std::net::SocketAddr,
     action: &str,
     db: &str,
     coll: &str,
@@ -99,8 +152,15 @@ pub async fn authorize(
             format!("no {action} permission on {db}.{coll}"),
         ));
     }
-    // per-request trace line (only emitted when dashboard.log_level = debug)
-    tracing::debug!("{action} /q/{db}/{coll} as {}@{}", claims.sub, claims.app);
+    // per-request trace line (only emitted when dashboard.log_level = debug);
+    // identity stays last ("... as name@app") so the Logs tab facet parser
+    // (state.rs log_identify) keeps working
+    let from = effective_addr(state, headers, addr);
+    tracing::debug!(
+        "{action} /q/{db}/{coll} from {from} as {}@{}",
+        claims.sub,
+        claims.app
+    );
     Ok(claims)
 }
 
@@ -207,12 +267,14 @@ fn cursor_last_name(cur: &Cursor) -> Result<Option<String>, ApiError> {
 
 pub async fn list_visible(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
     headers: HeaderMap,
     QueryBody(params): QueryBody<ListParams>,
 ) -> Result<Json<Value>, ApiError> {
     let started = Instant::now();
     let claims = authenticate(&state, &headers)?;
-    tracing::debug!("GET /ls as {}@{}", claims.sub, claims.app);
+    let from = effective_addr(&state, &headers, &addr.0);
+    tracing::debug!("GET /ls from {from} as {}@{}", claims.sub, claims.app);
 
     // ?db=X — the collections of one database
     if let Some(db) = &params.db {
@@ -307,13 +369,14 @@ pub struct FindParams {
 
 pub async fn find_docs(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
     QueryBody(params): QueryBody<FindParams>,
 ) -> Result<Json<Value>, ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;
-    let claims = authorize(&state, &headers, "GET", &db, &coll).await?;
+    let claims = authorize(&state, &headers, &addr.0, "GET", &db, &coll).await?;
     let app = claims.app.clone();
 
     // --- parse user inputs ---
@@ -436,6 +499,7 @@ pub struct WriteBody {
 
 pub async fn insert_or_update(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
     JsonBody(body): JsonBody<WriteBody>,
@@ -445,7 +509,7 @@ pub async fn insert_or_update(
 
     if body.filter.is_none() {
         // pure insert: JSON object -> insert_one, JSON array -> insert_many
-        let claims = authorize(&state, &headers, "POST", &db, &coll).await?;
+        let claims = authorize(&state, &headers, &addr.0, "POST", &db, &coll).await?;
         let data = body
             .data
             .clone()
@@ -480,7 +544,7 @@ pub async fn insert_or_update(
     }
 
     // update-many with $set
-    let claims = authorize(&state, &headers, "POST", &db, &coll).await?;
+    let claims = authorize(&state, &headers, &addr.0, "POST", &db, &coll).await?;
     let (filter, data) = body_filter_data(&body)?;
     let r = dbq::update_many(&state, &db, &coll, filter, doc! { "$set": data }, false).await?;
     record_request(&state, &claims, started, 1);
@@ -525,13 +589,14 @@ fn batch_to_docs(items: Vec<bson::Bson>, max_batch: usize) -> Result<Vec<Documen
 
 pub async fn put_update(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
     JsonBody(body): JsonBody<WriteBody>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;
-    let claims = authorize(&state, &headers, "PUT", &db, &coll).await?;
+    let claims = authorize(&state, &headers, &addr.0, "PUT", &db, &coll).await?;
     let (filter, data) = body_filter_data(&body)?;
     if filter.is_empty() {
         return Err(ApiError::bad_request(
@@ -554,13 +619,14 @@ pub async fn put_update(
 
 pub async fn patch_upsert(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
     JsonBody(body): JsonBody<WriteBody>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;
-    let claims = authorize(&state, &headers, "PATCH", &db, &coll).await?;
+    let claims = authorize(&state, &headers, &addr.0, "PATCH", &db, &coll).await?;
 
     // upsert-many: array `data`, no filter — per-doc upsert by _id (docs
     // without _id are plain inserts) in one bulkWrite round trip
@@ -617,13 +683,14 @@ pub async fn patch_upsert(
 
 pub async fn delete_docs(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
     JsonBody(body): JsonBody<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;
-    let claims = authorize(&state, &headers, "DELETE", &db, &coll).await?;
+    let claims = authorize(&state, &headers, &addr.0, "DELETE", &db, &coll).await?;
     let filter = match body.get("filter") {
         Some(f) => {
             if has_script_operator(f) {
@@ -727,12 +794,13 @@ fn index_json(i: &dbq::IndexInfo) -> Value {
 
 pub async fn list_indexes(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
 ) -> Result<Json<Value>, ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;
-    let claims = authorize(&state, &headers, "GET", &db, &coll).await?;
+    let claims = authorize(&state, &headers, &addr.0, "GET", &db, &coll).await?;
     let idx = dbq::list_indexes(&state, &db, &coll).await?;
     let out: Vec<Value> = idx.iter().map(index_json).collect();
     let n = out.len();
@@ -744,13 +812,14 @@ pub async fn list_indexes(
 /// taken by an incompatible index.
 pub async fn ensure_index(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
     JsonBody(body): JsonBody<EnsureIndexBody>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;
-    let claims = authorize(&state, &headers, "INDEX", &db, &coll).await?;
+    let claims = authorize(&state, &headers, &addr.0, "INDEX", &db, &coll).await?;
 
     let keys = parse_keys(&body.keys)?;
     let partial_filter_expression = match &body.partial_filter_expression {
@@ -803,13 +872,14 @@ pub async fn ensure_index(
 /// DELETE = drop by name (the name GET returns; unambiguous round-trip).
 pub async fn drop_index(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<crate::tls::MyAddr>,
     headers: HeaderMap,
     Path((db, coll)): Path<(String, String)>,
     JsonBody(body): JsonBody<DropIndexBody>,
 ) -> Result<Json<Value>, ApiError> {
     let started = Instant::now();
     check_path(&db, &coll)?;
-    let claims = authorize(&state, &headers, "INDEX", &db, &coll).await?;
+    let claims = authorize(&state, &headers, &addr.0, "INDEX", &db, &coll).await?;
     if body.name.is_empty() {
         return Err(ApiError::bad_request("index name must not be empty"));
     }
@@ -923,5 +993,53 @@ fn requested_limit(limit: &Option<u32>, state: &AppState, app: &str) -> u32 {
     match limit {
         Some(0) | None => enforced_limit(state, app),
         Some(n) => (*n).min(enforced_limit(state, app)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderMap;
+
+    fn hdr(name: &'static str, val: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(
+            axum::http::HeaderName::from_static(name),
+            axum::http::HeaderValue::from_str(val).unwrap(),
+        );
+        h
+    }
+
+    #[test]
+    fn proxy_ip_sources() {
+        // X-Real-IP wins
+        let mut h = hdr("x-real-ip", "1.2.3.4");
+        h.insert(
+            axum::http::HeaderName::from_static("x-forwarded-for"),
+            axum::http::HeaderValue::from_str("9.9.9.9, 8.8.8.8").unwrap(),
+        );
+        assert_eq!(proxy_ip(&h).unwrap().to_string(), "1.2.3.4");
+        // no X-Real-IP: LAST XFF entry (the one our proxy appended)
+        assert_eq!(
+            proxy_ip(&hdr("x-forwarded-for", "9.9.9.9, 8.8.8.8"))
+                .unwrap()
+                .to_string(),
+            "8.8.8.8"
+        );
+        assert_eq!(
+            proxy_ip(&hdr("x-forwarded-for", "::1")).unwrap().to_string(),
+            "::1"
+        );
+        // garbage / empty / absent headers yield None
+        assert_eq!(proxy_ip(&hdr("x-real-ip", "not-an-ip")), None);
+        assert_eq!(proxy_ip(&hdr("x-forwarded-for", "garbage")), None);
+        assert_eq!(proxy_ip(&HeaderMap::new()), None);
+        // a garbage X-Real-IP falls through to XFF
+        let mut h = hdr("x-real-ip", "not-an-ip");
+        h.insert(
+            axum::http::HeaderName::from_static("x-forwarded-for"),
+            axum::http::HeaderValue::from_str("5.6.7.8").unwrap(),
+        );
+        assert_eq!(proxy_ip(&h).unwrap().to_string(), "5.6.7.8");
     }
 }

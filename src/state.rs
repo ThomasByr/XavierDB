@@ -73,6 +73,10 @@ pub struct AppState {
     /// Dashboard login limit per IP per minute (server.yml
     /// admin.max_logins_per_ip_per_minute, default 5).
     pub dash_login_max_per_min: u32,
+    /// Trust X-Real-IP / X-Forwarded-For for the client IP (server.yml
+    /// network.trust_proxy_headers; enable only behind a reverse proxy —
+    /// see settings.rs).
+    pub trust_proxy_headers: bool,
 }
 
 impl AppState {
@@ -89,6 +93,7 @@ impl AppState {
         password_hash: String,
         max_insert_batch: usize,
         dash_login_max_per_min: u32,
+        trust_proxy_headers: bool,
     ) -> Arc<Self> {
         Arc::new(Self {
             config: RwLock::new(config),
@@ -120,6 +125,7 @@ impl AppState {
             password_hash,
             max_insert_batch,
             dash_login_max_per_min,
+            trust_proxy_headers,
         })
     }
 }
@@ -592,9 +598,9 @@ fn parse_level_msg(line: &str) -> (String, String, String) {
 }
 
 /// Extract (name, app) from identity-carrying log messages:
-/// auth lines ("login OK: name@app") and per-request debug lines
-/// ("GET /q/db/coll as name@app"); any other shape yields (None, None).
-/// Admin logins are excluded.
+/// auth lines ("login OK: name@app from 1.2.3.4:5678") and per-request
+/// debug lines ("GET /q/db/coll from 1.2.3.4:5678 as name@app"); any other
+/// shape yields (None, None). Admin logins are excluded.
 fn log_identify(msg: &str) -> (Option<String>, Option<String>) {
     let rest = ["login OK: ", "login failed: ", "login blocked: "]
         .iter()
@@ -602,6 +608,8 @@ fn log_identify(msg: &str) -> (Option<String>, Option<String>) {
         .unwrap_or("")
         .trim();
     let id = if let Some((n, a)) = rest.rsplit_once('@') {
+        // strip the trailing " from <peer addr>" login lines carry
+        let a = a.split_once(" from ").map(|(x, _)| x).unwrap_or(a);
         if !n.is_empty() && !a.is_empty() && !a.contains(' ') {
             Some((n, a))
         } else {
@@ -666,6 +674,35 @@ pub fn apply_log_level(level: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_identify_formats() {
+        // current formats (with peer addr) ...
+        assert_eq!(
+            log_identify("login OK: u1@app1 from 1.2.3.4:5678"),
+            (Some("u1".into()), Some("app1".into()))
+        );
+        assert_eq!(
+            log_identify("login failed: u1@app1 from [::1]:443"),
+            (Some("u1".into()), Some("app1".into()))
+        );
+        assert_eq!(
+            log_identify("GET /q/db/coll from 127.0.0.1:9999 as u2@app2"),
+            (Some("u2".into()), Some("app2".into()))
+        );
+        // ... and legacy lines from rotated files (no addr)
+        assert_eq!(
+            log_identify("login OK: u1@app1"),
+            (Some("u1".into()), Some("app1".into()))
+        );
+        assert_eq!(
+            log_identify("GET /q/db/coll as u2@app2"),
+            (Some("u2".into()), Some("app2".into()))
+        );
+        // non-identity lines
+        assert_eq!(log_identify("login throttled: 1.2.3.4:5678"), (None, None));
+        assert_eq!(log_identify("server started"), (None, None));
+    }
 
     #[test]
     fn log_files_rotate_bounded_and_keep_order() {
