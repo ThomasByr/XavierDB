@@ -13,6 +13,7 @@ Routes (top level, `src/main.rs`):
 ```
 POST /auth                                 client login -> JWT (+ HttpOnly cookie)
 GET|POST|PUT|PATCH|DELETE /q/<db>/<coll>   MongoDB proxy (JWT-protected)
+GET|POST|DELETE /q/<db>/<coll>/indexes     index list / ensure (idempotent) / drop (INDEX action)
 GET  /ls                                   list databases the caller may read (?db=<db> -> collections)
 /dashboard/ + /dashboard/api/*             admin dashboard (login-protected SPA + JSON API)
 GET  /health                               cached health document (public)

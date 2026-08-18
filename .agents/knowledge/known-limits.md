@@ -104,7 +104,7 @@
 
 ## Verification checkpoints after code changes
 
-`cargo test` (160 tests — 50 unit + 110 integration; NaN/±Inf sort and
+`cargo test` (168 tests — 50 unit + 118 integration; NaN/±Inf sort and
 array-sort pagination are covered live by tests/pagination.rs
 `nan_sort_paginates` + `array_sort_guard` through the server's own Mongo
 connection; crud_verbs.rs talks to Mongo directly with XDB_TB_MONGO_URI,

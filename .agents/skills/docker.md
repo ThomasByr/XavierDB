@@ -2,10 +2,12 @@
 
 First real run: `docker compose up --build -d` worked end to end on the dev
 machine (Docker Desktop 29.7.2, WSL2 backend, overlayfs). The integration
-battery (local rust, `cargo test`) against the docker stack is 108/110 —
+battery (local rust, `cargo test`) against the docker stack is 116/118 —
 the 2 watcher_reload failures are a Docker-Desktop-only limitation, see
 "inotify / file watchers" below. Re-verified 2026-08-17 against the
-rebuilt image (post build-speed fixes + dummy-binary fix): same 108/110.
+rebuilt image (post build-speed fixes + dummy-binary fix): 108/110 as
+counted then; re-verified 2026-08-18 (indexes endpoints): same 2 failures,
+116/118.
 Note for running the battery: on Windows the PATH `bash` is a broken WSL
 stub — invoke git-bash explicitly for tests/bootstrap.sh
 (`& "C:\Program Files\Git\bin\bash.exe" tests/bootstrap.sh ...`).
@@ -58,7 +60,11 @@ watcher (virtiofsd implements no FUSE notify). Consequences:
 - `cargo test` against a Docker-Desktop API: `watcher_reload` fails
   (`perms_file_watcher_reload` at the "watcher picked up the appended app"
   assert; `reload_endpoints` then dies on the poisoned suite lock — it passes
-  standalone). Everything else is green (108/110).
+  standalone). Everything else is green (116/118, re-verified 2026-08-18).
+  Live A/B proof: a host-side `touch authorized_keys.yml` fires NO reload
+  log line in `docker logs api`, while the identical battery run on bare
+  metal logs `authorized_keys.yml reloaded from disk` for both watcher
+  tests.
 - On bare metal (Linux/Windows host kernel inotify) and on real Linux Docker
   hosts (kernel bind mount) the watchers work — the battery was green there
   before.
@@ -129,8 +135,30 @@ come from the target cache mount); image binary is the REAL one
   `docker compose -f compose.yaml up -d`. Because it passes `-f
   compose.yaml`, compose does NOT auto-merge `compose.override.yaml`
   (the override is only picked up when compose is invoked WITHOUT `-f`)
-  — so prod never sees the dev override.
-- `compose.override.yaml` (dev-only, committed but NOT verified): disables
-  `develop.watch`, mounts `cargo-cache` + `target-cache` volumes, replaces
-  the command with `cargo watch -x 'run --release'`, tightens the
-  healthcheck to 5s. Treat as experimental — verify before relying on it.
+  — so prod never sees the dev override. NOTE: plain `docker compose up
+  -d` (no -f) DOES merge the override → boots the dev cargo-watch stack;
+  use `-f compose.yaml` for the prod-style stack. See the dev-override
+  bullet under "compose.yaml facts" for the verified dev loop.
+- `compose.override.yaml` + `Dockerfile.dev` (dev-only, committed; VERIFIED
+  WORKING 2026-08-18 on Docker Desktop): builds `xavierdb-api-dev` (rust:1-
+  slim-bookworm + cargo-watch BAKED IN via `cargo install --locked`, plus a
+  uid-1000-owned /cargo-home — the runtime user is non-root, so no apt at
+  startup and CARGO_HOME must be writable), then runs
+  `cargo watch --poll -w src -w Cargo.toml -x "run --release"` inside the
+  container against the repo mount. `--poll` is what makes it work on
+  Docker Desktop: cargo-watch stats mtimes through virtiofsd (coherent)
+  instead of relying on inotify (never delivered). `-w src -w Cargo.toml`
+  is REQUIRED: default watching covers the whole repo, and the server
+  rewrites its own state files (authorized_keys.yml on new-name logins,
+  config, logs) — watching those would rebuild+restart on every login
+  (verified: touching authorized_keys.yml + config does NOT restart with
+  the restricted watch). First `up -d --build api`: ~10 min image build
+  (cargo install cargo-watch) + full dep compile into the target-cache
+  volume; later restarts ≈ 20 s (deps cached), src-only rebuilds ≈ 1 min.
+  Cosmetic: the container flaps "unhealthy" while a rebuild runs (server
+  not listening yet) — docker only reports, it does NOT restart the
+  container (no autoheal). The PROD stack is unaffected: `deploy.sh` /
+  `docker compose -f compose.yaml ...` never merge the override.
+  History: the previous override ran `apt-get install cargo-watch` as the
+  non-root user at startup → "Permission denied" crash loop (exit 100),
+  and cargo-watch isn't in Debian repos anyway.

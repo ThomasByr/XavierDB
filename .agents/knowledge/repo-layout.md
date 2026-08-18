@@ -35,9 +35,9 @@ XavierDB/
 ├── tests/                         # integration battery — BLACK-BOX HTTP tests, need a running server+Mongo
 │   ├── common/mod.rs              #   shared helpers: fixture world docs, cached JWTs/admin cookie, HTTP wrappers, suite lock
 │   ├── bootstrap.sh               #   one-time fixture bootstrap (idempotent; dashboard creds from env or credentials.md)
-│   └── auth_flow.rs, crud_verbs.rs, dashboard_api.rs, edge_data.rs, meta_endpoints.rs,
-│       multi_app.rs, pagination.rs, perms_matrix.rs, projection.rs, query_filters.rs,
-│       smoke.rs, watcher_reload.rs   # 110 tests, ~30 s full run
+│   └── auth_flow.rs, crud_verbs.rs, dashboard_api.rs, edge_data.rs, indexes.rs,
+│       meta_endpoints.rs, multi_app.rs, pagination.rs, perms_matrix.rs, projection.rs,
+│       query_filters.rs, smoke.rs, watcher_reload.rs   # 118 tests, ~30 s full run
 ├── server.yml.example          # documented settings template (copy to server.yml; embedded in the binary)
 ├── .env.example                # Docker-compose only: UID/GID (the app never reads .env)
 ├── authorized_keys.yml.example  # documented permissions template

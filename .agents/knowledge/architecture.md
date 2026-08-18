@@ -56,7 +56,10 @@
 
 - Structure: `apps: {app_id: {token_hash, allow: [rules], deny: [rules], names:
   {name: {allow, deny}}}}`. Rule = `{actions, databases, collections}`.
-  Globs `*` and `?`. Template: `authorized_keys.yml.example`.
+  Globs `*` and `?`. Actions = HTTP verbs `GET/POST/PUT/PATCH/DELETE` **plus
+  `INDEX`** (manage indexes on /q/{db}/{coll}/indexes — default-deny, a
+  schema-level capability separate from document writes). Template:
+  `authorized_keys.yml.example`.
 - **Layered, first-match-wins**: name.deny → name.allow → app.deny →
   app.allow → deny.
 - New names are auto-added to the yml on `/auth` — this rewrites the whole
@@ -129,6 +132,38 @@
   `{"$numberDecimal":"…"}` (plain strings/`null` would silently change the
   type on re-insert). `$regex`+`$options` (two-key object) converts to a real
   regex; `$timestamp` requires non-negative `t`/`i`.
+
+### Index endpoints (GET/POST/DELETE /q/{db}/{coll}/indexes)
+
+- Perm model: GET lists indexes under the plain `GET` action (read access
+  ⇒ seeing index names/keys); POST (ensure) and DELETE (drop) both require
+  the dedicated `INDEX` action — one capability for index management, not
+  split by verb (document-DELETE must not imply dropping a unique index,
+  and INDEX must not imply document-delete).
+- ensure = idempotent createIndex, decision table: no index on those keys →
+  create → 201 `{created:true,name}` (name auto-generated when omitted,
+  `field_1_dir_…` style); same key pattern (any name) + same options →
+  200 `{created:false,name:existing}`; same name different keys → 409; same
+  keys different options (unique/sparse/TTL/partial filter) → 409 (changing
+  a TTL would need collMod — refused loudly, v1). Implemented by listing
+  first, then create_index — the driver's create gives no created/existed
+  info.
+- Flat request body `{keys, name?, unique?, sparse?, expire_after_seconds?,
+  partial_filter_expression?}`; keys validated server-side (each value 1/-1
+  or an index-type string like "text"/"2dsphere"/"hashed" → 400 otherwise).
+  `$where`/`$function` rejected in partial_filter_expression. Drop is
+  by NAME only (what GET returns); `_id_` refused with 400, unknown name
+  404 (pre-checked — the raw driver error would be a 500).
+- listIndexes on a missing collection fails with Mongo code 26 → mapped to
+  a clean 404. createIndexes client errors (codes 67/85/86/118) map to 409
+  with the sanitized server message.
+- Driver facts (mongodb 3.8): `mongodb::IndexModel` +
+  `mongodb::options::IndexOptions` (the `mongodb::index` module is PRIVATE —
+  only IndexModel is re-exported at the root; IndexOptions lives under
+  `mongodb::options`); `expire_after` is `Option<Duration>` (seconds ×),
+  `IndexOptions::default()` exists (non_exhaustive but Default);
+  `list_indexes` streams `IndexModel` (options field is `Option<IndexOptions>`,
+  name lives INSIDE options); `create_index` → `CreateIndexResult{index_name}`.
 
 ### Projection implementation map (v1, 2026-08-13)
 
@@ -321,7 +356,7 @@
   (`detachApps`/`detachNames`) persist only when they carry content.
   Weight chip → `openWeightPop` popover (0.1–10 step 0.1, auto-POST
   /app_weight on release); `w-alt` accent when ≠ 1.
-- Permission editor badge model: 5 badges per row, click cycles allow → deny
+- Permission editor badge model: 6 badges per row (5 verbs + INDEX), click cycles allow → deny
   → inherit (explicit SOLID / inherited DASHED / none HOLLOW; collections
   inherit-db GRAY FILL). Collections: caret expands a db row → real
   collections + overrides + "+ add". Globs: own badges + ↺ + ✕; ACTIVE globs

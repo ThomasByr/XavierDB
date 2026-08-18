@@ -10,6 +10,9 @@
 | `PUT /q/{db}/{coll}` | Bearer | update, 404 if 0 matched |
 | `PATCH /q/{db}/{coll}` | Bearer | upsert (200 updated / 201 inserted); array `data` = upsert-many (200) |
 | `DELETE /q/{db}/{coll}` | Bearer | `{filter}` → `{deleted_count}`, 404 if 0 |
+| `GET /q/{db}/{coll}/indexes` | Bearer | list indexes (`GET` perm): `{indexes:[{name, keys, unique?, sparse?, expire_after_seconds?, partial_filter_expression?}], count}`; 404 when the collection doesn't exist |
+| `POST /q/{db}/{coll}/indexes` | Bearer | ensure index (`INDEX` perm — flat body `{keys:{f:1|-1|"type"}, name?, unique?, sparse?, expire_after_seconds?, partial_filter_expression?}`): 201 `{created:true,name}` / 200 `{created:false,name}` (same keys, any name) / 409 CONFLICT (same name different keys, or same keys different options — incl. TTL change) |
+| `DELETE /q/{db}/{coll}/indexes` | Bearer | drop by name (`INDEX` perm): `{name}` → `{deleted:true,name}`; 404 unknown name; 400 on `_id_`/empty |
 | `GET /ls` | Bearer | flat list of listable dbs; `?db=X` → collections |
 | `GET /health` | public | health doc (+ `constants.max_insert_batch`, `constants.jwt_token_lifetime_seconds`, `constants.max_document_limit`); 200 ok / 503 otherwise |
 

@@ -6,7 +6,7 @@ npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (on
 #   npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
 cargo build                      # debug; on OSes that lock running executables this
                                  #   fails while the server is running — see restart-ritual.md
-cargo test                       # 50 unit + 110 integration tests (tests/); needs a running server
+cargo test                       # 50 unit + 118 integration tests (tests/); needs a running server
                                  #   + MongoDB — see "Integration battery" below; tests talk to
                                  #   real Mongo unconditionally (XDB_TB_MONGO_URI, default
                                  #   mongodb://localhost:27017; the env-gated unit equivalence
@@ -40,9 +40,9 @@ Full contracts: examples.md.
 
 ## Integration battery (tests/ — black-box HTTP, needs server + MongoDB up)
 
-110 tests across 12 files (auth_flow, perms_matrix, meta_endpoints, crud_verbs,
-edge_data, query_filters, projection, pagination, dashboard_api, multi_app,
-watcher_reload, smoke). Every /auth costs ~5 s Argon2id; /auth and the
+118 tests across 13 files (auth_flow, perms_matrix, meta_endpoints, crud_verbs,
+edge_data, indexes, query_filters, projection, pagination, dashboard_api,
+multi_app, watcher_reload, smoke). Every /auth costs ~5 s Argon2id; /auth and the
 dashboard login have SEPARATE per-IP throttles (config 30/min and env 5/min),
 so JWTs + the admin cookie are cached in `<temp>/xdb_tb_cache`
 and shared across all tests (~0 logins on a warm run; a stale cache
