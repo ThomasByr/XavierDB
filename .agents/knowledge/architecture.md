@@ -24,6 +24,13 @@
   windows. `/auth` always uses `config.auth.max_per_minute_per_ip` (default
   30, dashboard-editable); dashboard login uses server.yml
   `admin.max_logins_per_ip_per_minute` (default 5, clamped 1..=10_000).
+  **Client IP source (2026-08-18):** socket peer by default; when server.yml
+  `network.trust_proxy_headers` (env `TRUST_PROXY_HEADERS`, compose sets it
+  true) is on, the proxy header wins — `X-Real-IP`, else the LAST
+  `X-Forwarded-For` entry (the proxy-appended one; must parse as an IP or is
+  ignored). Helpers `routes_q::{proxy_ip, effective_ip, effective_addr}`
+  (unit-tested). Safe in the compose deployment because the port is
+  published to 127.0.0.1 only (nginx is the sole connector, sets X-Real-IP).
 
 ### Auth Q&A (verified from code — auth.rs, perms.rs)
 
@@ -402,3 +409,23 @@
 - Per-request DEBUG log lines only when `dashboard.log_level = "debug"`
   (hot-reloadable via `reload::Layer` + `with_filter`; hook applied at config
   save/reload/watcher). The battery runs at info → ~0 DEBUG lines by design.
+
+### Request log line formats (2026-08-18: peer addr added)
+
+Every identity-carrying log line ends with the effective client address
+  (`from IP` or `from IP:PORT`):
+  - `network.trust_proxy_headers` ON (compose/prod): the proxy header IP
+    (`X-Real-IP`, else last XFF entry) — no port, the proxy doesn't forward
+    one; verified live 2026-08-18.
+  - OFF (bare metal default): the socket peer `IP:PORT`. Behind a Docker
+    port-forward that's the bridge gateway (172.x.0.1), not the real client
+    IP. Behind compose+nginx in prod, the flag is ON via the
+    `TRUST_PROXY_HEADERS=true` env in compose.yaml (safe: port published to
+    127.0.0.1 only).
+- `/q` + `/ls` debug trace (routes_q): `GET /q/db/coll from 127.0.0.1:55555 as name@app`
+  — identity stays LAST so `log_identify`'s `" as "` split keeps working.
+- `/auth` login lines (routes_misc, INFO/WARN): `login OK: name@app from 127.0.0.1:55555`
+  (also failed/blocked; `login throttled: IP:PORT`).
+- `state.rs log_identify` strips the trailing `" from <addr>"` on login lines
+  before extracting the app facet — legacy lines without an addr still parse
+  (unit test `log_identify_formats`).

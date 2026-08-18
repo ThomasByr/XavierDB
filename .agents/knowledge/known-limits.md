@@ -14,6 +14,13 @@
   socket IP — `X-Forwarded-For` is deliberately NOT trusted (no proxy in the
   deployment; the header is client-controlled). Window is a fixed wall-clock
   minute: up to 2× the limit can pass across a minute boundary.
+  **Docker caveat:** behind a compose port-forward the peer IP is the bridge
+  gateway (172.x.0.1) for EVERY client → without mitigation the throttle is
+  one shared global bucket. MITIGATED (2026-08-18): compose.yaml sets
+  `TRUST_PROXY_HEADERS=true` → nginx's `X-Real-IP` is trusted (prod fronts
+  the API with nginx on the host; safe because the port is published to
+  127.0.0.1 only). Bare metal uses the socket peer directly. Directly-
+  exposed deployments must keep the flag OFF (headers are spoofable).
 - `/auth` + dashboard login: Argon2id verify runs on the tokio blocking pool
   (never on async workers); unknown apps/usernames verify against a fixed
   dummy PHC so response timing doesn't reveal whether an identity exists;
