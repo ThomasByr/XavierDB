@@ -54,7 +54,7 @@ docker compose -f compose.yaml up -d
 <summary>Rebuild without cache</summary>
 
 ```bash
-docker compose -f compose.yaml build --no-cache api
+docker compose -f compose.yaml build --no-cache xavierdb
 ```
 
 Then the usual `docker compose -f compose.yaml up -d` to restart the API.
@@ -69,7 +69,7 @@ is **generated and printed once** in the API container logs (it is hashed
 into `server.yml` — `admin.username` defaults to `admin`):
 
 ```bash
-docker compose -f compose.yaml logs api
+docker compose -f compose.yaml logs xavierdb
 ```
 
 <details>
@@ -147,10 +147,10 @@ Read more in the [examples](examples/README.md) README.
 
 ```bash
 docker compose -f compose.yaml watch    # rebuilds the API image on Cargo.toml/src changes
-# or, manually (incremental; clean rebuild: docker compose build --no-cache api):
+# or, manually (incremental; clean rebuild: docker compose build --no-cache xavierdb):
 docker compose -f compose.yaml up --build -d
 # dev hot-reload loop (compile + run INSIDE the container; uses the override):
-docker compose up -d --build api
+docker compose up -d --build xavierdb
 ```
 
 <details>
