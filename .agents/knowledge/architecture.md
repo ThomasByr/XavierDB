@@ -91,6 +91,15 @@
   keyset pagination and the array-sort guard keep working — cursors are
   projection-independent. Response `{documents:[…], next_cursor, has_more, truncated,
   limit_applied, count}`. Server caps `limit` at the app's adaptive limit.
+  Find deadline (2026-08-18): the whole find is wrapped in
+  `tokio::time::timeout` (dbq.rs `find_page`, inner `find_page_inner`) with
+  server.yml `runtime.find_timeout_ms` (default 10 000 ms, 0 = disabled,
+  nonzero clamped 100..=3 600 000; env override `FIND_TIMEOUT_MS`; logged at
+  startup as `find_timeout=…ms`) — a runaway query (multiplanner blowup on an
+  unindexed sort) fails with **504 TIMEOUT** instead of hanging until the HTTP
+  caller disconnects (which is what produced the "Interrupted operation as
+  its client disconnected" Mongo log noise on prod). Applies to GET /q only;
+  writes/counts/`/ls` are not deadline-wrapped.
 - POST: `{filter?, data}` — no filter = insert (201): `data` object →
   `insert_one` (`{inserted_count:1, inserted_id}`); `data` array → `insert_many`
   (`{inserted_count:n, inserted_ids:[…]}` in input order, cap

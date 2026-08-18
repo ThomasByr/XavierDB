@@ -19,7 +19,8 @@
 Errors: `{error, code, status}`; codes BAD_REQUEST/INVALID_FILTER/INVALID_SORT/
 INVALID_LIMIT/INVALID_CURSOR (400), UNAUTHORIZED (401), FORBIDDEN/BLOCKED (403),
 NOT_FOUND (404), CONFLICT (409, duplicate key), TOO_MANY_REQUESTS (429),
-INTERNAL_ERROR (500), UNAVAILABLE (503). Messages sanitized (paths,
+INTERNAL_ERROR (500), UNAVAILABLE (503), TIMEOUT (504 — GET /q find exceeded
+server.yml `runtime.find_timeout_ms`, default 10 s, 0 = disabled). Messages sanitized (paths,
 IPv4/IPv6 scrubbed; bare hostnames/host:port are NOT — they're deployment
 config). Client-caused Mongo command errors (bad regex, malformed shapes,
 validation) map to 400; duplicate keys → 409.
