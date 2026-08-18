@@ -17,28 +17,28 @@ stub — invoke git-bash explicitly for tests/bootstrap.sh
 ```bash
 docker compose up --build -d     # builds API image + starts MongoDB + API (incremental: layer cache)
 docker compose watch             # rebuilds image on ./Cargo.toml or ./src changes
-docker compose build --no-cache api   # force a full rebuild when the cache is suspect
-docker compose logs api          # first-run dashboard password is printed here
-docker compose restart api       # needed after server.yml changes (read at process start only)
+docker compose build --no-cache xavierdb   # force a full rebuild when the cache is suspect
+docker compose logs xavierdb          # first-run dashboard password is printed here
+docker compose restart xavierdb       # needed after server.yml changes (read at process start only)
 ```
 
 ## compose.yaml facts (verified)
 
-- api has **no `image:` key** (build-only; with both, compose would tag the
+- xavierdb has **no `image:` key** (build-only; with both, compose would tag the
   build and clobber the official `rust:1-slim-bookworm` tag).
-- Mongo healthcheck (marker-file hack, retries 100 × 5s) and the api
+- Mongo healthcheck (marker-file hack, retries 100 × 5s) and the xavierdb
   healthcheck (curl /health, https fallback) both verified green.
 - **Env precedence (since 2026-08-16): env var > `server.yml` > default.**
   The app no longer reads `.env` at all — all startup settings live in
   `server.yml` (YAML, startup-only, no hot reload), shared by bare metal and
   Docker through the repo mount. Compose's `HOST=0.0.0.0` and
-  `MONGODB_URI=mongodb://xavierdb:27017` env vars OVERRIDE the file, so the
+  `MONGODB_URI=mongodb://mongodb:27017` env vars OVERRIDE the file, so the
   same server.yml with bare-metal defaults (127.0.0.1 / localhost) works in
   both worlds. EXCEPTION: `admin.username`/`admin.password_hash` always come
   from the file (Windows always sets `USERNAME` — an env override would
   silently break the dashboard login on bare metal). `.env` now holds ONLY
   `UID`/`GID` (compose `user:` interpolation).
-- `user: ":"` (mongo) and `user: "$UID:$GID"` (api, from .env UID/GID=1000)
+- `user: ":"` (mongodb) and `user: "$UID:$GID"` (xavierdb, from .env UID/GID=1000)
   both run fine on Docker Desktop; the repo mount stays transparently
   editable from Windows.
 - Mongo volume: intended `${HOME}/data/xavier-mongo-db` bind mount. On this
@@ -47,7 +47,7 @@ docker compose restart api       # needed after server.yml changes (read at proc
   bind mount on a Linux host).
 - First boot with no `server.yml` in the repo: the server creates it from the
   embedded `server.yml.example` template and (blank `admin.password_hash`)
-  generates a dashboard password printed once — `docker compose logs api`.
+  generates a dashboard password printed once — `docker compose logs xavierdb`.
 
 ## inotify / file watchers (the one real limitation, verified)
 
@@ -62,7 +62,7 @@ watcher (virtiofsd implements no FUSE notify). Consequences:
   assert; `reload_endpoints` then dies on the poisoned suite lock — it passes
   standalone). Everything else is green (116/118, re-verified 2026-08-18).
   Live A/B proof: a host-side `touch authorized_keys.yml` fires NO reload
-  log line in `docker logs api`, while the identical battery run on bare
+  log line in `docker logs xavierdb`, while the identical battery run on bare
   metal logs `authorized_keys.yml reloaded from disk` for both watcher
   tests.
 - On bare metal (Linux/Windows host kernel inotify) and on real Linux Docker
@@ -70,7 +70,7 @@ watcher (virtiofsd implements no FUSE notify). Consequences:
   before.
 - Dashboard/perms writes still WORK in docker (the API reloads its own
   writes directly); only external file edits go unnoticed. Manual fix:
-  `docker compose restart api`, or use the `/perms/reload` +
+  `docker compose restart xavierdb`, or use the `/perms/reload` +
   `/config/reload` endpoints (relay works in docker).
 
 ## Dockerfile facts (verified 2026-08-17, after the build-speed fixes)
@@ -131,7 +131,7 @@ come from the target cache mount); image binary is the REAL one
 ## deploy.sh & compose.override.yaml (2026-08-17)
 
 - `deploy.sh` (repo root, for the Linux prod host): `set -euo pipefail`,
-  `git pull origin main` → `docker compose -f compose.yaml build api` →
+  `git pull origin main` → `docker compose -f compose.yaml build xavierdb` →
   `docker compose -f compose.yaml up -d`. Because it passes `-f
   compose.yaml`, compose does NOT auto-merge `compose.override.yaml`
   (the override is only picked up when compose is invoked WITHOUT `-f`)
@@ -140,7 +140,7 @@ come from the target cache mount); image binary is the REAL one
   use `-f compose.yaml` for the prod-style stack. See the dev-override
   bullet under "compose.yaml facts" for the verified dev loop.
 - `compose.override.yaml` + `Dockerfile.dev` (dev-only, committed; VERIFIED
-  WORKING 2026-08-18 on Docker Desktop): builds `xavierdb-api-dev` (rust:1-
+  WORKING 2026-08-18 on Docker Desktop): builds the dev image (rust:1-
   slim-bookworm + cargo-watch BAKED IN via `cargo install --locked`, plus a
   uid-1000-owned /cargo-home — the runtime user is non-root, so no apt at
   startup and CARGO_HOME must be writable), then runs

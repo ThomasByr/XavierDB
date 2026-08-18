@@ -5,7 +5,7 @@ directory (repo root bare metal; `/app` = repo mount in Docker).
 
 | file | format | purpose | hot reload? |
 |---|---|---|---|
-| `server.yml` | YAML | startup-only server settings (see `server.yml.example`): tls.cert_path/key_path, network.host/port/mongodb_uri, runtime.max_workers/max_insert_batch, log.files(1–10)/size_mb(1–20), admin.username/password_hash/max_logins_per_ip_per_minute (default 5; DASHBOARD login only — /auth always uses config `auth.max_per_minute_per_ip`), auth.jwt_secret. Precedence: **env var > server.yml > baked-in default** (compose injects `HOST`/`MONGODB_URI`; bare metal uses the file/defaults). EXCEPTION: `admin.username`/`admin.password_hash` always come from the file (Windows always sets `USERNAME`). `$` needs no quoting in YAML. | **No** — read once at boot; restart the process (`docker compose restart api` in Docker) |
+| `server.yml` | YAML | startup-only server settings (see `server.yml.example`): tls.cert_path/key_path, network.host/port/mongodb_uri, runtime.max_workers/max_insert_batch, log.files(1–10)/size_mb(1–20), admin.username/password_hash/max_logins_per_ip_per_minute (default 5; DASHBOARD login only — /auth always uses config `auth.max_per_minute_per_ip`), auth.jwt_secret. Precedence: **env var > server.yml > baked-in default** (compose injects `HOST`/`MONGODB_URI`; bare metal uses the file/defaults). EXCEPTION: `admin.username`/`admin.password_hash` always come from the file (Windows always sets `USERNAME`). `$` needs no quoting in YAML. | **No** — read once at boot; restart the process (`docker compose restart xavierdb` in Docker) |
 | `.env` | dotenv | **Docker Compose ONLY** — `UID`/`GID` for the `user: "$UID:$GID"` interpolation. The app never reads it (server.yml replaced it). | n/a (compose) |
 | `config` | XDB1 magic + crc32 + bincode | all tunables + history/redo/blocked | **Yes** — file watcher (500ms debounce) AND `/dashboard/api/config/reload` |
 | `config.bak…` | same | automatic backup rotation (MAX_BACKUPS=5) on save; fallback on corruption | n/a |
@@ -17,7 +17,7 @@ Startup behavior (`main.rs` + `settings.rs`):
   (template compiled INTO the binary, not read from the repo). If
   `admin.password_hash` is blank/unparseable → generate a strong password,
   Argon2id-hash it, write it back into `server.yml`, **print plaintext once**
-  to stdout/logs (`docker compose logs api` on Docker).
+  to stdout/logs (`docker compose logs xavierdb` on Docker).
 - `config` missing/corrupt → try `config.bak*` chain → else defaults, and a
   default file is **written to disk** (`config.rs::load_from_disk`).
 - `authorized_keys.yml` missing → "starting with no permissions",

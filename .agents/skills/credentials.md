@@ -12,7 +12,7 @@ or regenerate credentials as follows:
 
 - **Dashboard password** — the plaintext is printed EXACTLY ONCE, at first
   bootstrap, in the server log: bare metal = the terminal/stdout the server
-  was started with (e.g. `/tmp/xdb.log`); Docker = `docker compose logs api`.
+  was started with (e.g. `/tmp/xdb.log`); Docker = `docker compose logs xavierdb`.
   `server.yml` only ever holds the Argon2id `admin.password_hash` (not
   reversible). To force a fresh password: blank `admin.password_hash` in
   `server.yml` (or copy `server.yml.example` over it) and restart the server —

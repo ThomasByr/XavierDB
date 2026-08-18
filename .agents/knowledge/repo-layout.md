@@ -12,7 +12,7 @@ XavierDB/
 │   ├── ADMIN_GUIDE.md           #   dashboard views, ops, troubleshooting, sparse dashboard API section
 │   ├── API_REFERENCE.md         #   client API only + verified JS/Python examples
 │   └── CONFIGURATION.md         #   config file fields, adaptive-limit formula, perms format
-├── compose.yaml                 # 2 services: xavierdb (MongoDB) + api; api mounts repo over /app
+├── compose.yaml                 # 2 services: mongodb (vanilla MongoDB) + xavierdb (the Rust API); xavierdb mounts repo over /app
 ├── Dockerfile                   # node stage (esbuild) + single-stage rust:1-slim-bookworm build/run
 ├── .dockerignore                # full exclusions (dirs, state files, *.md/*.swp/*.tmp) — see skills/docker.md
 ├── .gitignore                   # /target, .env, server.yml, authorized_keys.yml, config, config.bak*, node_modules/
