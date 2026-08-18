@@ -3,7 +3,7 @@
 | file | contents |
 |---|---|
 | `README.md` (repo root) | quick start (Docker-first), bare metal `<details>`, route table, "why this shape", Files table |
-| `docs/API_REFERENCE.md` | client API only + verified JS/Python examples in `<details>`; dashboard → points to ADMIN_GUIDE.md#dashboard-api |
+| `docs/API_REFERENCE.md` | client API only + verified JS/Python examples in `<details>` (incl. index ensure/list/drop step, verified 2026-08-19 in docker); dashboard → points to ADMIN_GUIDE.md#dashboard-api |
 | `docs/ADMIN_GUIDE.md` | dashboard views (4-view), ops, troubleshooting; sparse dashboard API section |
 | `docs/CONFIGURATION.md` | config fields table (verified against config.rs defaults), adaptive-limit formula, perms format |
 | `authorized_keys.yml.example` | documented permissions template |

@@ -1,6 +1,6 @@
 # Examples crate — runnable client examples
 
-8 examples, each = `setup_<name>.rs` (dashboard API: admin login + perms POST
+9 examples, each = `setup_<name>.rs` (dashboard API: admin login + perms POST
 creating app/token/rights) + `<name>.rs` (client API showcase). All verified
 E2E against a live server; every command in examples/README.md works.
 
@@ -36,6 +36,7 @@ server-side (~5 s per setup run).
 | projection | xdb-projection | GET+POST xdb_projection — include/exclude/_id:0 + mixed → 400 INVALID_PROJECTION |
 | pagination | xdb-pagination | GET+POST xdb_pagination — cursor walk limit=3 over 10 seeded docs |
 | query | xdb-query | GET+POST xdb_query — $gte decimal, $regex+options, $exists, $date, $oid round-trip, raw output forms |
+| indexes | xdb-indexes | GET+POST+INDEX xdb_indexes — /indexes lifecycle: 404 before collection exists, ensure 201/200 idempotent, unique index enforcing 409 on inserts, 409 same-keys-diff-options + same-name-diff-keys, TTL listing, drop 200/404/400(_id_) |
 | write | xdb-write | all 5 verbs xdb_write — insert/update/PUT-404/PATCH-upsert/DELETE-404 |
 | ls | xdb-ls | GET `*` — flat dbs + ?db=collections (first visible db) |
 | errors | xdb-errors | GET db1 + POST/PUT/PATCH/DELETE xdb_errors — 401/403/404/409 contract |
@@ -62,6 +63,15 @@ server-side (~5 s per setup run).
   Decimal128→{"$numberDecimal":"…"}, NaN→{"$numberDouble":"NaN"}.
 - /auth with a wrong token costs the same ~5 s (dummy-PHC timing
   equalization) — the errors showcase demonstrates this deliberately.
+- **/indexes (verified 2026-08-19 in docker)**: GET needs plain GET perm
+  (404 NOT_FOUND "collection does not exist" before the first insert),
+  POST/DELETE need the dedicated `INDEX` action (perms ACTIONS =
+  GET/POST/PUT/PATCH/DELETE/INDEX). Ensure is idempotent: 201 created /
+  200 {created:false} same keys+options (auto-name "f_1_g_-1" when `name`
+  omitted) / 409 same keys diff options or same name diff keys. Drop: 200
+  {deleted:true}, 404 unknown name, 400 on `_id_`. TTL index demo seeds no
+  dates on the indexed field so nothing ever expires. Showcase re-run safe:
+  dropped indexes are re-ensured, persistent ones return 200.
 - Seed idempotency trick used by all write showcases: fixed string _ids;
   duplicate 409 ignored.
 - Notes for users (examples/README.md): 5 s per /auth, separate per-IP
