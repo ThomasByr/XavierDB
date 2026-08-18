@@ -17,10 +17,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 6.5g                              # Docker enforces the cgroup memory limit
-          cpus: "2.0"                               # full CPU cores
+          memory: 7.0g                              # Docker enforces the cgroup memory limit
+          cpus: "3.0"                               # full CPU cores
     command: >
-      --wiredTigerCacheSizeGB 2.5
+      --wiredTigerCacheSizeGB 3.5
       --setParameter wiredTigerConcurrentReadTransactions=64
       --setParameter wiredTigerConcurrentWriteTransactions=64
     ulimits:
@@ -74,9 +74,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
-          cpus: "2.0"
-    memswap_limit: 2g
+          memory: 0.5g
+          cpus: "1.0"
+    memswap_limit: 1.5g
     depends_on:
       mongodb:
         condition: service_healthy
