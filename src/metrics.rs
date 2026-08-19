@@ -211,7 +211,8 @@ pub async fn metrics_loop(state: std::sync::Arc<AppState>) {
     // override, default = the app's working directory (repo root = /app in
     // Docker, where server.yml/config/logs live — same host filesystem as
     // the bind-mounted Mongo data dir on the prod deployment)
-    let disk_target = normalize_path(&crate::settings::env_str("DISK_PATH").unwrap_or_else(|| ".".into()));
+    let disk_target =
+        normalize_path(&crate::settings::env_str("DISK_PATH").unwrap_or_else(|| ".".into()));
     let mut disk_missing_logged = false;
     // cgroup CPU usage baseline (first tick only seeds it)
     let mut cgroup_cpu_prev: Option<(Instant, u64)> = None;
@@ -232,8 +233,8 @@ pub async fn metrics_loop(state: std::sync::Arc<AppState>) {
 
         // CPU: cgroup quota/usage when a limit is set (container), else
         // sysinfo's host-wide /proc/stat reading (bare metal, Windows)
-        let cpu_pct = cgroup_cpu_pct(&mut cgroup_cpu_prev)
-            .unwrap_or_else(|| sys.global_cpu_usage() as f64);
+        let cpu_pct =
+            cgroup_cpu_pct(&mut cgroup_cpu_prev).unwrap_or_else(|| sys.global_cpu_usage() as f64);
 
         // RAM: cgroup limit when one is set (sysinfo reads memory.max /
         // memory.current itself); cgroup "used" includes reclaimable page
