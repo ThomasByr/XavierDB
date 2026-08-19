@@ -181,8 +181,8 @@ impl Default for AuthSettings {
 // ---------------------------------------------------------------------------
 
 /// Non-empty OS env var (empty counts as unset — `PORT=`/`HOST=` must not
-/// reach the app).
-fn env_str(key: &str) -> Option<String> {
+/// reach the app). Also used outside settings (e.g. `DISK_PATH` in metrics).
+pub(crate) fn env_str(key: &str) -> Option<String> {
     std::env::var(key)
         .ok()
         .map(|v| v.trim().to_string())
