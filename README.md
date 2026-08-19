@@ -8,7 +8,7 @@
 > with per-client authentication, granular permissions, adaptive load control
 > and a live admin dashboard.
 
-[![Rust](https://img.shields.io/badge/Rust-1.97+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.85+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Web Dashboard](https://img.shields.io/badge/Dashboard-Plain%20HTML%2FCSS%2FJS-purple?logo=html5&logoColor=white)](https://developer.mozilla.org/en-US/docs/Web)
 [![MongoDB](https://img.shields.io/badge/MongoDB-8.0+-green?logo=mongodb&logoColor=white)](https://www.mongodb.com/)
 [![Docker](https://img.shields.io/badge/Docker-29.7+-blue?logo=docker&logoColor=white)](https://www.docker.com/)
@@ -44,6 +44,11 @@ cp server.yml.example server.yml
 touch authorized_keys.yml
 ```
 
+> [!CAUTION]
+> Never copy `authorized_keys.yml.example` into prod: its demo token is public
+> (it's in this repo!) yet has read/write access. Keep the file empty and add
+> your apps from the dashboard.
+
 Prerequisites: Docker with Compose v2+ (e.g. Docker Desktop).
 
 ```bash
@@ -61,7 +66,9 @@ Then the usual `docker compose -f compose.yaml up -d` to restart the API.
 
 </details>
 
-State persists on the host:
+State persists on the host: the whole repo root is bind-mounted into the
+container (`compose.yaml`), so `server.yml`, `config` (and backups),
+`authorized_keys.yml` and the log files live in your checkout.
 
 The API reads the repo's `server.yml` (created from `server.yml.example` on
 first boot). If `admin.password_hash` is blank, the admin dashboard password
@@ -82,7 +89,7 @@ npm install  # generate src/assets/app.js (dashboard TypeScript -> JS)
 npm run build
 
 cp server.yml.example server.yml  # edit host/port/mongodb_uri if needed
-cp authorized_keys.yml.example authorized_keys.yml
+touch authorized_keys.yml
 
 cargo run --release
 ```
@@ -170,12 +177,12 @@ needed at runtime.
 
 ## Tests
 
-Two tiers, both launched with `cargo test` (44 unit + 110 integration = 154):
+Two tiers, both launched with `cargo test` (55 unit + 118 integration = 173):
 
 ```bash
-cargo test                              # everything: 44 unit + 110 integration
+cargo test                              # everything: 55 unit + 118 integration
 cargo test --bin XavierDB               # inline unit tests only
-cargo test --test auth_flow             # one integration suite (12 suites total)
+cargo test --test auth_flow             # one integration suite (13 suites total)
 XDB_TEST_MONGO_URI=mongodb://127.0.0.1:27017 cargo test  # + the Mongo-backed
                                         # pagination-equivalence test
 ```
