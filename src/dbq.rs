@@ -633,14 +633,90 @@ fn type_brackets_before(b: &Bson) -> Vec<&'static str> {
     TYPE_ORDER[..idx].to_vec()
 }
 
+/// Which sort columns keep the BSON type-bracket fallback branches in the
+/// keyset continuation (server.yml `runtime.keyset_type_brackets`).
+///
+/// Mongo orders values by BSON type first (minKey < null < numbers < string
+/// < object < array < binData < …) while query operators are type-bracketed,
+/// so the fallback branches are what keeps a paginated walk complete past a
+/// type transition. They have a real cost, though: `$type` is not a range
+/// predicate, so it cannot become index bounds — with "all", every deep
+/// keyset page over an `_id`-sorted collection runs as a residual-filter
+/// full `_id` index scan (observed on prod: 183k keys examined per 101-doc
+/// page, ~250 ms each). Dropping the branches is safe exactly when the
+/// column's values are known to be a single BSON type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeysetTypeBrackets {
+    /// Fallbacks on every sort column — correct for any data (default).
+    All,
+    /// Skip the fallbacks for the `_id` column(s) only. Safe when every
+    /// `_id` in the collection is a single BSON type (all custom-set
+    /// strings, or all ObjectIds — never mixed); verify with
+    /// `db.coll.aggregate([{$group: {_id: {$type: "$_id"}}}])` before
+    /// enabling. Client-chosen sort fields keep their fallbacks.
+    IdOnly,
+    /// Skip the fallbacks everywhere. Only safe when client sort fields are
+    /// single-typed as well — a mixed-type sort field will silently skip
+    /// documents past a type transition.
+    Off,
+}
+
+impl KeysetTypeBrackets {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "all" => Some(Self::All),
+            "id-only" => Some(Self::IdOnly),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::IdOnly => "id-only",
+            Self::Off => "off",
+        }
+    }
+}
+
 /// Build the keyset continuation condition from a cursor.
 /// Standard multi-column keyset: for sort keys (f0..fn) with last values
 /// (v0..vn): $or of {f0 > v0}, {f0 = v0, f1 > v1}, ..., {f0=v0..f(n-1)=v(n-1), fn > vn}.
 /// Each column also gets a type-bracket fallback branch ($type) because query
-/// operators only match same-type values while the sort orders by BSON type.
-pub fn keyset_condition(sort: &[(String, i8)], last: &[Bson]) -> Document {
+/// operators only match same-type values while the sort orders by BSON type —
+/// unless `mode` skips them for that column (see KeysetTypeBrackets). A
+/// single-arm result collapses to the bare condition document (no $or
+/// wrapper): fewer planner branches and readable profiler entries.
+pub fn keyset_condition(
+    sort: &[(String, i8)],
+    last: &[Bson],
+    mode: KeysetTypeBrackets,
+) -> Document {
+    let mut ors = keyset_ors(sort, last, mode);
+    if ors.is_empty() && mode != KeysetTypeBrackets::All {
+        // Only reachable when every same-type branch was skipped (null /
+        // undefined boundary) AND the fallbacks were dropped — i.e. the
+        // single-type assumption behind IdOnly/Off is violated (e.g. a null
+        // _id). The full bracket set is still correct there; an empty $or
+        // (matches nothing) would silently end the walk.
+        ors = keyset_ors(sort, last, KeysetTypeBrackets::All);
+    }
+    if ors.len() == 1 {
+        return ors.pop().unwrap();
+    }
+    doc! { "$or": Bson::Array(ors.into_iter().map(Bson::Document).collect()) }
+}
+
+fn keyset_ors(sort: &[(String, i8)], last: &[Bson], mode: KeysetTypeBrackets) -> Vec<Document> {
     let mut ors: Vec<Document> = Vec::new();
     for k in 0..sort.len() {
+        // IdOnly drops the fallbacks for _id columns; Off drops them for all
+        // columns (see KeysetTypeBrackets for the safety contract).
+        let skip_brackets = match mode {
+            KeysetTypeBrackets::All => false,
+            KeysetTypeBrackets::IdOnly => sort[k].0 == "_id",
+            KeysetTypeBrackets::Off => true,
+        };
         // --- same-type continuation ---
         // skipped for a null boundary: {$gt: null} matches ALL null/missing
         // values and would re-serve already-paged documents (the _id
@@ -674,73 +750,89 @@ pub fn keyset_condition(sort: &[(String, i8)], last: &[Bson]) -> Document {
         }
         // --- type-bracket continuation: values whose BSON type sorts after
         // (asc) or before (desc) the boundary value's type ---
-        let mut brackets = if sort[k].1 > 0 {
-            type_brackets_after(&last[k])
-        } else {
-            type_brackets_before(&last[k])
-        };
-        if is_nan && sort[k].1 > 0 {
-            // the numeric bracket is already covered by the $gt: -Inf branch;
-            // $type: "number" would match NaN itself and re-serve the group
-            brackets.retain(|s| *s != "number");
-        }
-        if !brackets.is_empty() {
-            // "null" and "nan" have no $type form that covers missing fields
-            // / NaN: match them with equality branches ({f: null} matches
-            // explicit nulls AND missing fields; {f: NaN} matches NaN docs)
-            let has_null = brackets.iter().any(|s| *s == "null");
-            let has_nan = brackets.iter().any(|s| *s == "nan");
-            let rest: Vec<&str> = brackets
-                .into_iter()
-                .filter(|s| *s != "null" && *s != "nan")
-                .collect();
-            if !rest.is_empty() {
-                let mut part = Document::new();
-                for j in 0..k {
-                    part.insert(sort[j].0.clone(), last[j].clone());
-                }
-                let mut tc = Document::new();
-                tc.insert(
-                    "$type",
-                    Bson::Array(
-                        rest.into_iter()
-                            .map(|s| Bson::String(s.to_string()))
-                            .collect(),
-                    ),
-                );
-                part.insert(sort[k].0.clone(), Bson::Document(tc));
-                ors.push(part);
+        if !skip_brackets {
+            let mut brackets = if sort[k].1 > 0 {
+                type_brackets_after(&last[k])
+            } else {
+                type_brackets_before(&last[k])
+            };
+            if is_nan && sort[k].1 > 0 {
+                // the numeric bracket is already covered by the $gt: -Inf branch;
+                // $type: "number" would match NaN itself and re-serve the group
+                brackets.retain(|s| *s != "number");
             }
-            if has_null {
-                let mut part = Document::new();
-                for j in 0..k {
-                    part.insert(sort[j].0.clone(), last[j].clone());
+            if !brackets.is_empty() {
+                // "null" and "nan" have no $type form that covers missing fields
+                // / NaN: match them with equality branches ({f: null} matches
+                // explicit nulls AND missing fields; {f: NaN} matches NaN docs)
+                let has_null = brackets.iter().any(|s| *s == "null");
+                let has_nan = brackets.iter().any(|s| *s == "nan");
+                let rest: Vec<&str> = brackets
+                    .into_iter()
+                    .filter(|s| *s != "null" && *s != "nan")
+                    .collect();
+                if !rest.is_empty() {
+                    let mut part = Document::new();
+                    for j in 0..k {
+                        part.insert(sort[j].0.clone(), last[j].clone());
+                    }
+                    let mut tc = Document::new();
+                    tc.insert(
+                        "$type",
+                        Bson::Array(
+                            rest.into_iter()
+                                .map(|s| Bson::String(s.to_string()))
+                                .collect(),
+                        ),
+                    );
+                    part.insert(sort[k].0.clone(), Bson::Document(tc));
+                    ors.push(part);
                 }
-                part.insert(sort[k].0.clone(), Bson::Null);
-                ors.push(part);
-            }
-            if has_nan {
-                let mut part = Document::new();
-                for j in 0..k {
-                    part.insert(sort[j].0.clone(), last[j].clone());
+                if has_null {
+                    let mut part = Document::new();
+                    for j in 0..k {
+                        part.insert(sort[j].0.clone(), last[j].clone());
+                    }
+                    part.insert(sort[k].0.clone(), Bson::Null);
+                    ors.push(part);
                 }
-                part.insert(sort[k].0.clone(), Bson::Double(f64::NAN));
-                ors.push(part);
+                if has_nan {
+                    let mut part = Document::new();
+                    for j in 0..k {
+                        part.insert(sort[j].0.clone(), last[j].clone());
+                    }
+                    part.insert(sort[k].0.clone(), Bson::Double(f64::NAN));
+                    ors.push(part);
+                }
             }
         }
     }
-    doc! { "$or": Bson::Array(ors.into_iter().map(Bson::Document).collect()) }
+    ors
 }
 
 /// Build the full filter: user filter AND keyset condition (when cursor given).
-pub fn build_filter(user: Option<Document>, cursor: Option<&Cursor>) -> Result<Document, ApiError> {
-    match (user, cursor) {
-        (Some(u), Some(c)) => {
-            let kc = keyset_condition(&c.sort, &c.last_bson()?);
-            Ok(doc! { "$and": Bson::Array(vec![Bson::Document(u), Bson::Document(kc)]) })
+/// An empty user filter collapses away (no `{}` arm inside $and), so a bare
+/// `_id`-sorted walk in id-only mode compiles to `{_id: {$gt: ...}}` —
+/// index-seekable, and readable in the Mongo profiler.
+pub fn build_filter(
+    user: Option<Document>,
+    cursor: Option<&Cursor>,
+    mode: KeysetTypeBrackets,
+) -> Result<Document, ApiError> {
+    let keyset = match cursor {
+        Some(c) => Some(keyset_condition(&c.sort, &c.last_bson()?, mode)),
+        None => None,
+    };
+    match (user, keyset) {
+        (Some(u), Some(k)) => {
+            if u.is_empty() {
+                Ok(k)
+            } else {
+                Ok(doc! { "$and": Bson::Array(vec![Bson::Document(u), Bson::Document(k)]) })
+            }
         }
         (Some(u), None) => Ok(u),
-        (None, Some(c)) => Ok(keyset_condition(&c.sort, &c.last_bson()?)),
+        (None, Some(k)) => Ok(k),
         (None, None) => Ok(Document::new()),
     }
 }
@@ -1283,6 +1375,7 @@ mod tests {
             5,
             false,
             find_timeout_ms,
+            KeysetTypeBrackets::All,
         )
     }
 
@@ -1403,7 +1496,7 @@ mod tests {
             Bson::String("x".into()),
             Bson::ObjectId(ObjectId::new()),
         ];
-        let cond = keyset_condition(&sort, &last);
+        let cond = keyset_condition(&sort, &last, KeysetTypeBrackets::All);
         let ors = cond.get_array("$or").unwrap();
         // a: same-type + $type; b: same + $type + {b: null} + {b: NaN};
         // _id: same + $type + {_id: null} + {_id: NaN}
@@ -1464,7 +1557,7 @@ mod tests {
         // AND missing fields) comes entirely after it and must be reachable
         let sort = vec![("f".into(), -1i8), ("_id".into(), -1i8)];
         let last = vec![Bson::Int32(5), Bson::ObjectId(ObjectId::new())];
-        let cond = keyset_condition(&sort, &last);
+        let cond = keyset_condition(&sort, &last, KeysetTypeBrackets::All);
         let ors = cond.get_array("$or").unwrap();
         // {$lt:5}, $type[minKey], {f:null}, {f:NaN}, _id $lt, _id $type, _id null, _id NaN
         assert_eq!(ors.len(), 8);
@@ -1484,7 +1577,7 @@ mod tests {
     fn keyset_null_boundary_skips_gt_null() {
         let sort = vec![("f".into(), 1i8), ("_id".into(), 1i8)];
         let last = vec![Bson::Null, Bson::ObjectId(ObjectId::new())];
-        let cond = keyset_condition(&sort, &last);
+        let cond = keyset_condition(&sort, &last, KeysetTypeBrackets::All);
         let ors = cond.get_array("$or").unwrap();
         // no {$gt: null} branch (it would re-serve every null/missing doc);
         // f gets $type + the {f: NaN} branch, _id gets $gt tiebreaker + $type
@@ -1521,7 +1614,7 @@ mod tests {
         // (it would re-serve the NaN group)
         let sort = vec![("f".into(), 1i8), ("_id".into(), 1i8)];
         let last = vec![Bson::Double(f64::NAN), Bson::ObjectId(ObjectId::new())];
-        let cond = keyset_condition(&sort, &last);
+        let cond = keyset_condition(&sort, &last, KeysetTypeBrackets::All);
         let ors = cond.get_array("$or").unwrap();
         let f0 = ors[0]
             .as_document()
@@ -1546,7 +1639,7 @@ mod tests {
         // null bracket (incl. missing) is reachable via {f: null}
         let sort = vec![("f".into(), -1i8), ("_id".into(), -1i8)];
         let last = vec![Bson::Double(f64::NAN), Bson::ObjectId(ObjectId::new())];
-        let cond = keyset_condition(&sort, &last);
+        let cond = keyset_condition(&sort, &last, KeysetTypeBrackets::All);
         let ors = cond.get_array("$or").unwrap();
         assert!(ors.iter().all(|o| {
             o.as_document()
@@ -1566,6 +1659,88 @@ mod tests {
                 Some(Bson::Double(d)) if d.is_nan()
             )
         }));
+    }
+
+    #[test]
+    fn keyset_id_only_drops_id_branches() {
+        let sort = vec![("a".into(), 1i8), ("_id".into(), 1i8)];
+        let last = vec![Bson::String("x".into()), Bson::String("k".into())];
+        let cond = keyset_condition(&sort, &last, KeysetTypeBrackets::IdOnly);
+        let ors = cond.get_array("$or").unwrap();
+        // a: same-type + $type (string boundary: 12 brackets after, no
+        // null/nan) = 2 arms; _id: tiebreaker only = 1 arm
+        assert_eq!(ors.len(), 3);
+        assert!(
+            !ors.iter().any(|o| o
+                .as_document()
+                .unwrap()
+                .get("_id")
+                .and_then(|v| v.as_document())
+                .is_some_and(|d| d.contains_key("$type"))),
+            "no $type branch on _id in id-only mode"
+        );
+        // the _id tiebreaker branch is still there
+        assert!(ors.iter().any(|o| {
+            let d = o.as_document().unwrap();
+            d.get("a") == Some(&Bson::String("x".into()))
+                && d.get("_id")
+                    .and_then(|v| v.as_document())
+                    .is_some_and(|d| d.contains_key("$gt"))
+        }));
+    }
+
+    #[test]
+    fn keyset_modes_collapse_single_arm() {
+        // id-only + a pure _id sort: the condition is the bare
+        // {_id: {$gt: ...}} — no $or wrapper, so the planner gets a clean
+        // index range (the prod full-scan pathology came from the $or with
+        // $type making the whole filter a residual filter)
+        let sort = vec![("_id".into(), 1i8)];
+        let last = vec![Bson::String("m".into())];
+        let cond = keyset_condition(&sort, &last, KeysetTypeBrackets::IdOnly);
+        assert!(cond.get("$or").is_none());
+        assert_eq!(
+            cond.get("_id").unwrap().as_document().unwrap().get("$gt"),
+            Some(&Bson::String("m".into()))
+        );
+        // off mode + single sort field: same collapse
+        let sort = vec![("f".into(), 1i8)];
+        let cond = keyset_condition(&sort, &[Bson::Int32(5)], KeysetTypeBrackets::Off);
+        assert!(cond.get("$or").is_none());
+        assert_eq!(
+            cond.get("f").unwrap().as_document().unwrap().get("$gt"),
+            Some(&Bson::Int32(5))
+        );
+        // all mode keeps the $or (same-type + type brackets)
+        let cond = keyset_condition(&sort, &[Bson::Int32(5)], KeysetTypeBrackets::All);
+        assert!(cond.get("$or").is_some());
+    }
+
+    #[test]
+    fn build_filter_collapses_empty_user_filter() {
+        let c = Cursor {
+            v: 1,
+            id: "c1".into(),
+            db: "db1".into(),
+            coll: "coll".into(),
+            sort: vec![("_id".into(), 1i8)],
+            last: vec![bson_to_cursor_json(&Bson::String("m".into())).unwrap()],
+        };
+        // empty user filter + cursor -> bare keyset condition (no $and wrapper
+        // with an empty {} arm)
+        let f = build_filter(Some(Document::new()), Some(&c), KeysetTypeBrackets::IdOnly).unwrap();
+        assert!(f.get("$and").is_none());
+        assert!(f.get("$or").is_none());
+        assert_eq!(
+            f.get("_id").unwrap().as_document().unwrap().get("$gt"),
+            Some(&Bson::String("m".into()))
+        );
+        // non-empty user filter keeps the $and
+        let f2 = build_filter(Some(doc! {"x": 1}), Some(&c), KeysetTypeBrackets::IdOnly).unwrap();
+        assert!(f2.get("$and").is_some());
+        // no cursor -> user filter untouched
+        let f3 = build_filter(Some(doc! {"x": 1}), None, KeysetTypeBrackets::IdOnly).unwrap();
+        assert_eq!(f3, doc! {"x": 1});
     }
 
     #[test]
@@ -1619,8 +1794,8 @@ mod tests {
             sort: vec![("a".into(), 1i8)],
             last: vec!["1e999".into()],
         };
-        assert!(build_filter(None, Some(&c)).is_err());
-        assert!(build_filter(Some(Document::new()), Some(&c)).is_err());
+        assert!(build_filter(None, Some(&c), KeysetTypeBrackets::All).is_err());
+        assert!(build_filter(Some(Document::new()), Some(&c), KeysetTypeBrackets::All).is_err());
     }
 
     #[test]
@@ -1961,8 +2136,11 @@ mod tests {
                 vec![("a".into(), -1), ("b".into(), 1), ("c".into(), 1)],
             ];
             let mut failures = 0;
-            for raw in specs {
-                let sort = normalize_sort(&raw);
+            // both modes must be exact here: the dataset's _ids are all
+            // ObjectId (single type), so id-only cannot lose documents
+            for mode in [KeysetTypeBrackets::All, KeysetTypeBrackets::IdOnly] {
+            for raw in &specs {
+                let sort = normalize_sort(raw);
                 for limit in [1u32, 2, 3, 5, 13] {
                     // baseline: single full scan
                     let mut cur = coll
@@ -1979,7 +2157,7 @@ mod tests {
                     let mut got = Vec::new();
                     let mut cursor: Option<Cursor> = None;
                     loop {
-                        let filter = build_filter(None, cursor.as_ref()).unwrap();
+                        let filter = build_filter(None, cursor.as_ref(), mode).unwrap();
                         let mut cur = coll
                             .find(filter)
                             .sort(sort_document(&sort))
@@ -2032,6 +2210,7 @@ mod tests {
                     }
                 }
             }
+            }
             coll.drop().await.unwrap();
             assert_eq!(failures, 0, "keyset pagination diverged from full scan");
 
@@ -2074,6 +2253,7 @@ mod tests {
                 docs2.push(d);
             }
             coll2.insert_many(&docs2).await.unwrap();
+            let mode = KeysetTypeBrackets::All;
             let mut array_failures = 0;
             for raw in [vec![("a".into(), 1)], vec![("a".into(), -1)], vec![("a".into(), 1), ("b".into(), -1)]] {
                 let sort = normalize_sort(&raw);
@@ -2095,7 +2275,7 @@ mod tests {
                     let mut cursor: Option<Cursor> = None;
                     let mut explicit_stop = false;
                     for _page in 0..200 {
-                        let filter = build_filter(None, cursor.as_ref()).unwrap();
+                        let filter = build_filter(None, cursor.as_ref(), mode).unwrap();
                         let mut cur = coll2
                             .find(filter)
                             .sort(sort_document(&sort))
@@ -2204,6 +2384,7 @@ mod tests {
                     parse_projection(&serde_json::json!({ "c": 0, "_id": 0 })).unwrap(),
                 ),
             ];
+            let mode = KeysetTypeBrackets::All;
             let mut proj_failures = 0;
             for raw in [
                 vec![("a".into(), 1)],
@@ -2255,7 +2436,7 @@ mod tests {
                         let mut got = Vec::new();
                         let mut cursor: Option<Cursor> = None;
                         loop {
-                            let filter = build_filter(None, cursor.as_ref()).unwrap();
+                            let filter = build_filter(None, cursor.as_ref(), mode).unwrap();
                             let mut f = coll3
                                 .find(filter)
                                 .sort(sort_document(&sort))
@@ -2333,6 +2514,132 @@ mod tests {
                 proj_failures, 0,
                 "projection changed pagination order or visible fields"
             );
+        });
+    }
+
+    /// Off mode (no type brackets anywhere) is exact when every sort field
+    /// AND _id is single-typed across the collection — the documented safety
+    /// contract for runtime.keyset_type_brackets: "off". Runs only when
+    /// XDB_TEST_MONGO_URI is set (scratch db, dropped afterwards).
+    #[test]
+    fn keyset_off_mode_homogeneous_equivalence() {
+        let Ok(uri) = std::env::var("XDB_TEST_MONGO_URI") else {
+            eprintln!(
+                "skipping keyset_off_mode_homogeneous_equivalence (XDB_TEST_MONGO_URI unset)"
+            );
+            return;
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let client = mongodb::Client::with_uri_str(&uri).await.unwrap();
+            let db = client.database("xdb_test");
+            let coll_name = format!("page_eq_off_{}", std::process::id());
+            let coll = db.collection::<Document>(&coll_name);
+            coll.drop().await.unwrap();
+
+            // homogeneous dataset: a always Int32, b always String, _id
+            // always ObjectId (no missing / mixed / null / NaN values)
+            let mut docs = Vec::new();
+            for i in 0..40u32 {
+                docs.push(doc! {
+                    "a": Bson::Int32((i % 9) as i32),
+                    "b": Bson::String(format!("s{}", i % 6)),
+                    "_id": bson::oid::ObjectId::from_bytes([
+                        0, 0, 0, 0, 0, 0, 0, (i >> 24) as u8, (i >> 16) as u8,
+                        (i >> 8) as u8, i as u8, 0,
+                    ]),
+                });
+            }
+            coll.insert_many(&docs).await.unwrap();
+
+            let specs: Vec<Vec<(String, i8)>> = vec![
+                vec![("a".into(), 1)],
+                vec![("a".into(), -1)],
+                vec![("a".into(), 1), ("b".into(), -1)],
+                vec![("_id".into(), 1)],
+            ];
+            let mut failures = 0;
+            for mode in [
+                KeysetTypeBrackets::All,
+                KeysetTypeBrackets::IdOnly,
+                KeysetTypeBrackets::Off,
+            ] {
+                for raw in &specs {
+                    let sort = normalize_sort(raw);
+                    for limit in [1u32, 3, 7] {
+                        let mut cur = coll
+                            .find(Document::new())
+                            .sort(sort_document(&sort))
+                            .limit(200)
+                            .await
+                            .unwrap();
+                        let mut baseline = Vec::new();
+                        while let Some(d) = cur.try_next().await.unwrap() {
+                            baseline.push(d.get_object_id("_id").unwrap().to_hex());
+                        }
+                        let mut got = Vec::new();
+                        let mut cursor: Option<Cursor> = None;
+                        loop {
+                            let filter = build_filter(None, cursor.as_ref(), mode).unwrap();
+                            let mut cur = coll
+                                .find(filter)
+                                .sort(sort_document(&sort))
+                                .limit(limit as i64 + 1)
+                                .await
+                                .unwrap();
+                            let mut page = Vec::new();
+                            while let Some(d) = cur.try_next().await.unwrap() {
+                                page.push(d);
+                                if page.len() as u32 > limit {
+                                    break;
+                                }
+                            }
+                            let has_more = page.len() as u32 > limit;
+                            if has_more {
+                                page.truncate(limit as usize);
+                            }
+                            for d in &page {
+                                got.push(d.get_object_id("_id").unwrap().to_hex());
+                            }
+                            if !has_more {
+                                break;
+                            }
+                            let last = page.last().unwrap();
+                            let mut vals = Vec::new();
+                            for (f, _) in &sort {
+                                vals.push(
+                                    bson_to_cursor_json(
+                                        &last.get(f).cloned().unwrap_or(Bson::Null),
+                                    )
+                                    .unwrap(),
+                                );
+                            }
+                            cursor = Some(Cursor {
+                                v: 1,
+                                id: "t".into(),
+                                db: "xdb_test".into(),
+                                coll: coll_name.clone(),
+                                sort: sort.clone(),
+                                last: vals,
+                            });
+                        }
+                        if got != baseline {
+                            failures += 1;
+                            eprintln!(
+                                "OFF-MODE PAGINATION MISMATCH mode={:?} sort={sort:?} limit={limit}
+  baseline={baseline:?}
+  got={got:?}",
+                                mode
+                            );
+                        }
+                    }
+                }
+            }
+            coll.drop().await.unwrap();
+            assert_eq!(failures, 0, "homogeneous-data pagination diverged");
         });
     }
 }

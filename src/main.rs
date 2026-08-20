@@ -361,6 +361,9 @@ async fn run(max_workers: usize, settings: ServerSettings) {
     let max_insert_batch = settings.runtime.max_insert_batch;
     let mongodb_uri = settings.network.mongodb_uri.clone();
     let find_timeout_ms = settings.runtime.find_timeout_ms;
+    let keyset_type_brackets =
+        crate::dbq::KeysetTypeBrackets::parse(&settings.runtime.keyset_type_brackets)
+            .unwrap_or(crate::dbq::KeysetTypeBrackets::All);
 
     // --- config + perms ---
     let config_path = PathBuf::from("config");
@@ -472,6 +475,7 @@ async fn run(max_workers: usize, settings: ServerSettings) {
         dash_login_max_per_min,
         settings.network.trust_proxy_headers,
         settings.runtime.find_timeout_ms,
+        keyset_type_brackets,
     );
 
     use tracing_subscriber::layer::{Layer, SubscriberExt};
@@ -501,8 +505,9 @@ async fn run(max_workers: usize, settings: ServerSettings) {
         std::process::exit(1);
     });
     info!(
-        "XavierDB listening on {addr} ({} workers, mongo={mongodb_uri}, tls={https}, find_timeout={find_timeout_ms}ms)",
-        max_workers
+        "XavierDB listening on {addr} ({} workers, mongo={mongodb_uri}, tls={https}, find_timeout={find_timeout_ms}ms, keyset_type_brackets={})",
+        max_workers,
+        keyset_type_brackets.as_str()
     );
 
     let app = build_router(state.clone()).into_make_service_with_connect_info::<tls::MyAddr>();

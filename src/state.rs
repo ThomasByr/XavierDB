@@ -80,6 +80,9 @@ pub struct AppState {
     /// Server-side deadline for MongoDB find queries in ms (server.yml
     /// runtime.find_timeout_ms; 0 = disabled). Enforced in dbq::find_page.
     pub find_timeout_ms: u64,
+    /// Keyset-pagination type-bracket mode (server.yml
+    /// runtime.keyset_type_brackets; see dbq::KeysetTypeBrackets).
+    pub keyset_type_brackets: crate::dbq::KeysetTypeBrackets,
 }
 
 impl AppState {
@@ -98,6 +101,7 @@ impl AppState {
         dash_login_max_per_min: u32,
         trust_proxy_headers: bool,
         find_timeout_ms: u64,
+        keyset_type_brackets: crate::dbq::KeysetTypeBrackets,
     ) -> Arc<Self> {
         Arc::new(Self {
             config: RwLock::new(config),
@@ -131,6 +135,7 @@ impl AppState {
             dash_login_max_per_min,
             trust_proxy_headers,
             find_timeout_ms,
+            keyset_type_brackets,
         })
     }
 }

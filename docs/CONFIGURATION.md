@@ -12,8 +12,8 @@ Precedence: OS environment variable (set and non-empty) > `server.yml` >
 baked-in default — so Docker Compose can inject container values without
 touching the file. Recognized overrides: `HOST`, `PORT`, `MONGODB_URI`,
 `TRUST_PROXY_HEADERS`, `TLS_CERT_PATH`, `TLS_KEY_PATH`, `MAX_WORKERS`,
-`MAX_INSERT_BATCH`, `FIND_TIMEOUT_MS`, `LOG_FILES`, `LOG_SIZE_MB`,
-`MAX_LOGINS_PER_IP_PER_MINUTE`, `JWT_SECRET`. Exception:
+`MAX_INSERT_BATCH`, `FIND_TIMEOUT_MS`, `KEYSET_TYPE_BRACKETS`, `LOG_FILES`,
+`LOG_SIZE_MB`, `MAX_LOGINS_PER_IP_PER_MINUTE`, `JWT_SECRET`. Exception:
 `admin.username` and `admin.password_hash` always come from the file
 (Windows always sets `USERNAME` in the environment). `server.yml` is read
 once at boot; restart to apply (TLS cert/key **files**, however, are
@@ -32,6 +32,7 @@ get a documented template.
 | `runtime.max_workers` | `4` | Tokio worker threads |
 | `runtime.max_insert_batch` | `1000` | max documents per insert batch (`POST /q` with array `data`); must be ≥ 1, larger batches → `400` |
 | `runtime.find_timeout_ms` | `10 000` | server-side deadline for `GET /q` finds; exceeded → `504 TIMEOUT`. `0` disables; otherwise clamped 100–3 600 000 ms |
+| `runtime.keyset_type_brackets` | `all` | keyset-pagination type-bracket mode: `all` (correct for mixed-type data), `id-only` (drop the `$type` fallback branches for the `_id` column — recommended when every `_id` per collection is a single BSON type; without it every deep paginated page over an `_id`-sorted collection is a full `_id` index scan), `off` (drop them everywhere — only when sort fields are single-typed too, or pagination can silently skip documents). Invalid values fall back to `all` with a WARN |
 | `log.files` / `log.size_mb` | `5` / `10` | rotating log files (clamped 1–10 files × 1–20 MB) |
 | `admin.username` | `admin` | dashboard login name |
 | `admin.password_hash` | empty | Argon2id PHC hash of the dashboard password. `$` needs no quoting in YAML. Empty → generated once and printed to the terminal |

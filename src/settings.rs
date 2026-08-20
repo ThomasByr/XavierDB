@@ -76,6 +76,10 @@ pub struct RuntimeSettings {
     /// severs the connection mid-operation. 0 disables; nonzero values
     /// are clamped 100..=3_600_000.
     pub find_timeout_ms: u64,
+    /// Keyset-pagination type-bracket mode, "all" | "id-only" | "off"
+    /// (see dbq::KeysetTypeBrackets). Startup-only. Invalid values fall
+    /// back to "all" with a WARN.
+    pub keyset_type_brackets: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -145,6 +149,7 @@ impl Default for RuntimeSettings {
             max_workers: 4,
             max_insert_batch: crate::routes_q::MAX_INSERT_BATCH,
             find_timeout_ms: 10_000,
+            keyset_type_brackets: "all".to_string(),
         }
     }
 }
@@ -271,6 +276,9 @@ pub fn load() -> ServerSettings {
             s.runtime.find_timeout_ms = n;
         }
     }
+    if let Some(v) = env_str("KEYSET_TYPE_BRACKETS") {
+        s.runtime.keyset_type_brackets = v;
+    }
     if let Some(v) = env_str("LOG_FILES") {
         if let Ok(n) = v.parse::<usize>() {
             s.log.files = n;
@@ -318,6 +326,16 @@ impl ServerSettings {
         // 0 = disabled; anything else must be a sane deadline
         if self.runtime.find_timeout_ms != 0 {
             self.runtime.find_timeout_ms = self.runtime.find_timeout_ms.clamp(100, 3_600_000);
+        }
+        if crate::dbq::KeysetTypeBrackets::parse(&self.runtime.keyset_type_brackets).is_none() {
+            crate::state::log_line(
+                "WARN",
+                &format!(
+                    "[settings] runtime.keyset_type_brackets must be all|id-only|off (got {:?}) — using \"all\"",
+                    self.runtime.keyset_type_brackets
+                ),
+            );
+            self.runtime.keyset_type_brackets = "all".to_string();
         }
         self.log.files = self.log.files.clamp(1, 10);
         self.log.size_mb = self.log.size_mb.clamp(1, 20);
@@ -423,6 +441,26 @@ mod tests {
         s.runtime.find_timeout_ms = 0;
         s.clamp();
         assert_eq!(s.runtime.find_timeout_ms, 0); // 0 = disabled, not floored
+    }
+
+    #[test]
+    fn keyset_type_brackets_validation() {
+        let mut s = ServerSettings::default();
+        assert_eq!(s.runtime.keyset_type_brackets, "all");
+        s.runtime.keyset_type_brackets = "id-only".into();
+        s.clamp();
+        assert_eq!(s.runtime.keyset_type_brackets, "id-only");
+        s.runtime.keyset_type_brackets = "off".into();
+        s.clamp();
+        assert_eq!(s.runtime.keyset_type_brackets, "off");
+        s.runtime.keyset_type_brackets = "bogus".into();
+        s.clamp();
+        assert_eq!(s.runtime.keyset_type_brackets, "all"); // fallback
+        // and it round-trips through YAML
+        let s: ServerSettings =
+            serde_yaml::from_str("runtime:\n  keyset_type_brackets: id-only\n").unwrap();
+        assert_eq!(s.runtime.keyset_type_brackets, "id-only");
+        assert_eq!(s.runtime.find_timeout_ms, 10_000); // rest defaults intact
     }
 
     #[test]

@@ -50,6 +50,25 @@ runtime:
   # HTTP client gives up and severs the connection mid-operation. 0 disables
   # the deadline. Default 10000; nonzero values clamped 100..=3600000.
   find_timeout_ms: 10000
+  # Keyset-pagination type-bracket mode (how the continuation filter handles
+  # BSON type ordering — see dbq::KeysetTypeBrackets):
+  #   "all"     — full type-bracket fallback branches on every sort column
+  #               (correct for mixed-type data, incl. _id). Default.
+  #   "id-only" — skip the fallback branches for the _id column only.
+  #               SAFE only when every _id in every collection is a single
+  #               BSON type (all custom-set strings, or all ObjectIds — never
+  #               mixed); verify with
+  #                 db.<coll>.aggregate([{$group:{_id:{$type:"$_id"}}}])
+  #               RECOMMENDED when verified: $type cannot use index bounds,
+  #               so with "all" every deep paginated page over an _id-sorted
+  #               collection is a full _id index scan (observed on prod:
+  #               ~183k keys examined per 101-doc page). Sort fields keep
+  #               their fallbacks.
+  #   "off"     — skip them everywhere. Only when client SORT fields are
+  #               single-typed too; a mixed-type sort field silently skips
+  #               documents during pagination.
+  # Startup-only (restart to apply).
+  keyset_type_brackets: "all"
 
 # --- rotating log files (optional) ---
 # The server writes its logs to rotating files on disk: `xavierdb.log`

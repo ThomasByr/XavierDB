@@ -439,7 +439,11 @@ pub async fn find_docs(
     let effective = requested.min(enforced);
     let truncated = requested > enforced;
 
-    let full_filter = dbq::build_filter(Some(filter_doc), cursor.as_ref())?;
+    let full_filter = dbq::build_filter(
+        Some(filter_doc),
+        cursor.as_ref(),
+        state.keyset_type_brackets,
+    )?;
     let (docs, has_more, last_doc) = dbq::find_page(
         &state,
         &db,
