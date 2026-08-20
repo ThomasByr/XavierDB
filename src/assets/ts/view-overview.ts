@@ -316,10 +316,16 @@ interface RpsSeries {
 interface NameStack {
   app: string;
   color: string;
+  /** drawn bands, biggest contributor first; the last entry may be the
+   *  synthetic hatched "others" aggregate (see othersIdx) */
   names: string[];
   times: number[];
   cum: number[][];
-  ownPts: { t: number; v: number }[][]; // raw per-name points (hover values)
+  /** index of the merged "others" band in names, -1 when there is none */
+  othersIdx: number;
+  /** EVERY ranked name_id (not just the kept bands) — hover detail */
+  allNames: string[];
+  allPts: { t: number; v: number }[][];
 }
 
 /* which apps are expanded into a stacked name_id breakdown (persisted) */
@@ -336,6 +342,24 @@ let detailApps: Set<string> = new Set(
 );
 function saveDetailApps() {
   localStorage.setItem(RPS_DETAILS_LS, JSON.stringify([...detailApps]));
+}
+
+/* contribution threshold (% of an app's window-average rps): name_ids
+   under it merge into one hatched "others" band. Default 33 → at most 3
+   individual bands. 0 = show every band. Persisted. */
+const RPS_THRESHOLD_LS = "xdb-rps-threshold";
+const RPS_THRESHOLD_DEFAULT = 33;
+let rpsThreshold: number = (() => {
+  try {
+    const v = parseInt(localStorage.getItem(RPS_THRESHOLD_LS) ?? "", 10);
+    return Number.isFinite(v) && v >= 0 && v <= 100 ? v : RPS_THRESHOLD_DEFAULT;
+  } catch {
+    return RPS_THRESHOLD_DEFAULT;
+  }
+})();
+function setRpsThreshold(v: number) {
+  rpsThreshold = Math.min(100, Math.max(0, Math.round(v)));
+  localStorage.setItem(RPS_THRESHOLD_LS, String(rpsThreshold));
 }
 
 function buildNameStacks(m: Metrics, apps: string[], win: number, nowSec: number): NameStack[] {
@@ -363,18 +387,38 @@ function buildNameStacks(m: Metrics, apps: string[], win: number, nowSec: number
     if (!ranked.length) continue;
     const times = Array.from(new Set(ranked.flatMap((r) => r.pts.map((p) => p.t)))).sort((x, y) => x - y);
     if (!times.length) continue;
-    const cum: number[][] = [];
-    for (let i = 0; i < ranked.length; i++) {
-      const own = times.map((t) => interp(ranked[i].pts, t));
-      cum.push(times.map((_, k) => (i === 0 ? own[k] : cum[i - 1][k] + own[k])));
+    // split: names reaching the threshold share of the app's window total
+    // keep their own band, the rest merge into one synthetic "others" band
+    // (the top contributor is always kept, even above a 50% threshold)
+    const total = ranked.reduce((s, r) => s + r.contrib, 0);
+    let keep = ranked.length;
+    if (rpsThreshold > 0 && total > 0)
+      keep = Math.max(1, ranked.filter((r) => (r.contrib / total) * 100 >= rpsThreshold - 1e-9).length);
+    const bands = ranked.slice(0, keep).map((r) => ({
+      name: r.name,
+      vals: times.map((t) => interp(r.pts, t)),
+    }));
+    let othersIdx = -1;
+    const rest = ranked.slice(keep);
+    if (rest.length) {
+      othersIdx = bands.length;
+      bands.push({
+        name: `others (${rest.length})`,
+        vals: times.map((t) => rest.reduce((s, r) => s + interp(r.pts, t), 0)),
+      });
     }
+    const cum: number[][] = [];
+    for (let i = 0; i < bands.length; i++)
+      cum.push(times.map((_, k) => (i === 0 ? bands[i].vals[k] : cum[i - 1][k] + bands[i].vals[k])));
     stacks.push({
       app,
       color: lineColor(app),
-      names: ranked.map((r) => r.name),
+      names: bands.map((b) => b.name),
       times,
       cum,
-      ownPts: ranked.map((r) => r.pts),
+      othersIdx,
+      allNames: ranked.map((r) => r.name),
+      allPts: ranked.map((r) => r.pts),
     });
   }
   return stacks;
@@ -425,6 +469,34 @@ const RPS_ML = 46,
   RPS_MR = 10,
   RPS_MT = 8,
   RPS_MB = 20;
+
+/* diagonal-hatch fill pattern for the merged "others" band — visually
+   distinct from the real name bands. Cached per app color (the stacks are
+   only ever drawn on the single RPS chart canvas, so the patterns are
+   safely reused across redraws). */
+const hatchCache = new Map<string, CanvasPattern>();
+function hatchPattern(ctx: CanvasRenderingContext2D, color: string): CanvasPattern | string {
+  let p = hatchCache.get(color);
+  if (!p) {
+    const c = el("canvas", { width: "8", height: "8" }) as HTMLCanvasElement;
+    const hc = c.getContext("2d");
+    if (!hc) return withAlpha(color, 0.15); // no 2d context: plain translucent fill
+    hc.strokeStyle = withAlpha(color, 0.35);
+    hc.lineWidth = 1.2;
+    hc.beginPath();
+    hc.moveTo(-2, 2);
+    hc.lineTo(2, -2);
+    hc.moveTo(-2, 10);
+    hc.lineTo(10, -2);
+    hc.moveTo(6, 14);
+    hc.lineTo(14, 6);
+    hc.stroke();
+    p = ctx.createPattern(c, "repeat") ?? undefined;
+    if (p) hatchCache.set(color, p);
+    else return withAlpha(color, 0.15);
+  }
+  return p;
+}
 
 function drawAppRpsChart(
   canvas: HTMLCanvasElement,
@@ -486,7 +558,8 @@ function drawAppRpsChart(
   // level is NOT stroked — it is the app line, drawn below at full opacity.
   for (const st of stacks) {
     const n = st.names.length;
-    const bandA = (i: number) => (n <= 1 ? 0.3 : 0.3 - (0.22 * i) / (n - 1));
+    // most contributing band: 50% opacity, fading to 10% going up the stack
+    const bandA = (i: number) => (n <= 1 ? 0.5 : 0.5 - (0.4 * i) / (n - 1));
     const lineA = (i: number) => (n <= 2 ? 0.85 : 0.85 - (0.55 * i) / (n - 2));
     for (let i = 0; i < n; i++) {
       ctx.beginPath();
@@ -502,7 +575,7 @@ function drawAppRpsChart(
         ctx.lineTo(xPix(st.times[0]), mt + ih);
       }
       ctx.closePath();
-      ctx.fillStyle = withAlpha(st.color, bandA(i));
+      ctx.fillStyle = st.othersIdx === i ? hatchPattern(ctx, st.color) : withAlpha(st.color, bandA(i));
       ctx.fill();
     }
     ctx.lineWidth = 1.4;
@@ -633,8 +706,8 @@ function drawRpsHover(
     rows.push({ app: true, label: s.app, value: interp(s.pts, t), color: s.color });
     const st = stacks.find((x2) => x2.app === s.app);
     if (st)
-      for (let i = 0; i < st.names.length; i++)
-        rows.push({ app: false, label: st.names[i], value: interp(st.ownPts[i], t), color: st.color });
+      for (let i = 0; i < st.allNames.length; i++)
+        rows.push({ app: false, label: st.allNames[i], value: interp(st.allPts[i], t), color: st.color });
   }
   const vals = rows.map((r) => fmtNum(r.value, 1));
 
@@ -824,9 +897,29 @@ function openDetailsPop(btn: HTMLElement) {
     list.append(row);
   }
   pop.append(list);
+  // contribution threshold: name_ids under this % of an app's window
+  // traffic merge into one hatched "others" band (0 = show every band)
+  const thrRow = el("div", { class: "dp-thr-row" });
+  const thrVal = el("span", { class: "wp-val" }, [`≥ ${rpsThreshold}%`]);
+  thrRow.append(el("span", { class: "wp-title" }, ["name_id threshold"]), thrVal);
+  const thrSlider = el("input", {
+    type: "range",
+    min: "0",
+    max: "100",
+    step: "1",
+    value: String(rpsThreshold),
+  }) as HTMLInputElement;
+  thrSlider.addEventListener("input", () => {
+    setRpsThreshold(parseInt(thrSlider.value, 10));
+    thrVal.textContent = `≥ ${rpsThreshold}%`;
+    if (lastMetrics) updateRpsChart(lastMetrics);
+  });
+  pop.append(thrRow, thrSlider);
   pop.append(
     el("div", { class: "wp-hint" }, [
       "stacks each name_id of the selected app(s) · the app line tops the stack",
+      el("br"),
+      'name_ids under the threshold share merge into a hatched "others" band · top contributor always shown',
     ]),
   );
   pop.addEventListener("mousedown", (e) => e.stopPropagation());

@@ -292,6 +292,14 @@ table.data tr:hover td { background: var(--surface-2); }
   background: var(--surface-1); border: 1px solid var(--outline-variant); border-radius: 10px;
   box-shadow: var(--elevation-2);
 }
+/* threshold slider section at the bottom of the details popover */
+.dp-thr-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--outline-variant);
+}
+.dp-thr-row .wp-title { font-size: 11px; color: var(--on-surface-variant); text-transform: uppercase; letter-spacing: .5px; }
+.dp-thr-row .wp-val { font-family: var(--mono); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.det-pop input[type="range"] { width: 100%; }
 .dp-title { font-size: 11px; color: var(--on-surface-variant); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
 .dp-list { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow-y: auto; }
 .dp-row { display: flex; align-items: center; gap: 9px; padding: 3px 0; font-size: 12.5px; cursor: pointer; }
