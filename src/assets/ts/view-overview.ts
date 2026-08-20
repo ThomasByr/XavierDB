@@ -323,9 +323,9 @@ interface NameStack {
   cum: number[][];
   /** index of the merged "others" band in names, -1 when there is none */
   othersIdx: number;
-  /** EVERY ranked name_id (not just the kept bands) — hover detail */
-  allNames: string[];
-  allPts: { t: number; v: number }[][];
+  /** one point-series per drawn band (kept name_ids, biggest first, plus
+   *  the synthetic "others" aggregate) — hover rows mirror the chart */
+  bandPts: { t: number; v: number }[][];
 }
 
 /* which apps are expanded into a stacked name_id breakdown (persisted) */
@@ -417,8 +417,7 @@ function buildNameStacks(m: Metrics, apps: string[], win: number, nowSec: number
       times,
       cum,
       othersIdx,
-      allNames: ranked.map((r) => r.name),
-      allPts: ranked.map((r) => r.pts),
+      bandPts: bands.map((b) => b.vals.map((v, k) => ({ t: times[k], v }))),
     });
   }
   return stacks;
@@ -706,8 +705,8 @@ function drawRpsHover(
     rows.push({ app: true, label: s.app, value: interp(s.pts, t), color: s.color });
     const st = stacks.find((x2) => x2.app === s.app);
     if (st)
-      for (let i = 0; i < st.allNames.length; i++)
-        rows.push({ app: false, label: st.allNames[i], value: interp(st.allPts[i], t), color: st.color });
+      for (let i = 0; i < st.names.length; i++)
+        rows.push({ app: false, label: st.names[i], value: interp(st.bandPts[i], t), color: st.color });
   }
   const vals = rows.map((r) => fmtNum(r.value, 1));
 
