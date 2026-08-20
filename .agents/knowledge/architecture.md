@@ -433,9 +433,12 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   stays open, persisted in localStorage `xdb-rps-threshold`, default 33 →
   at most ~3 individual bands; 0 = every band; there is NO standalone
   button in `.rps-head`). The hover
-  tooltip still lists EVERY name_id (`allNames`/`allPts` on NameStack),
-  merged ones included. name_id labels are drawn INSIDE the right edge of
-  the plot, each just below its own cumulative line (min 12 px apart,
+  tooltip mirrors the chart: it lists only the DRAWN bands
+  (`bandPts` on NameStack — kept name_ids + the aggregated `others (N)`
+  row; changed 2026-08-20, was every name_id via `allNames`/`allPts` —
+  giant unmoving-with-cursor panels). Set the threshold to 0 to get
+  every band in both chart and tooltip. name_id labels are drawn INSIDE
+  the right edge of the plot, each just below its own cumulative line (min 12 px apart,
   ellipsized to 170px) — NOT in the top legend. Chart hover: dashed
   vertical crosshair + light tooltip panel (Chart.js-style) listing every
   app row with its interpolated rps, name_id rows nested under expanded
