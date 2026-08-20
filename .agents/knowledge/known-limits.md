@@ -4,6 +4,12 @@
 
 - Admin sessions in-memory → restart = re-login.
 - Dashboard rewrite of authorized_keys.yml loses its comments.
+- Overview "All apps · RPS" long windows (up to 1 year) come from the
+  BROWSER-side `RpsArchive` (localStorage), not the server: history exists
+  only for times the dashboard was open (gaps compress on the x-axis), it is
+  per-browser/per-profile (another browser or incognito starts empty), and
+  server restarts don't clear it. The server itself still only serves ~120
+  ticks (~10 min) of `rps_history` per app/name.
 - Keyset pagination refuses (400) to continue past a page whose sort field
   contains an **array** value — MongoDB's element-wise array sort cannot be
   represented in a keyset cursor; silent loss/loops would be worse. NaN/±Inf

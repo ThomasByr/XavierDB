@@ -401,12 +401,24 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
 - Overview: blocked-apps alert strip (`.ov-alert`, hidden while no app is
   blocked; `renderOvAlert` lists the blocked apps as `.badge.bad`), 4 stat
   chips + 5 mini chart cards (CPU, Memory, Disk, Download, Upload) via
-  `drawMini()`, plus an "App traffic" card (`renderOvTraffic`): the top 6
+  `drawMini()`, an "All apps · RPS" card (`#ov-rps`, one line per app_id on a
+  SHARED y-scale, stable per-app colors via `lineColor` string hash, legend
+  with current rps; window button under the chart opens the `.win-pop`
+  slider popover — 16 presets 1 min → 1 year, persisted in localStorage
+  `xdb-rps-window`), plus an "App traffic" card (`renderOvTraffic`): the top 6
   apps by RPS (`OV_TOP_APPS`), rebuilt every poll like the limits table —
   columns weight / trend (70×22 sparkline from `rps_history`, drawn only
   AFTER the row is attached — `clientWidth` is 0 before) / rps / p50 / limit
   / status badge; header summary = active count, summed rps, worst p50,
   lifetime `health.app.total_requests`.
+- RPS long-window archive (`RpsArchive`, app.ts): the server keeps only ~120
+  ticks (~10 min) of `rps_history`, so the dashboard samples every /metrics
+  poll into tiered average buckets (10s/1m/5m/30m/6h/1d resolutions) and
+  persists them to localStorage `xdb-rps-archive-v1` (saved ≥ every 30 s +
+  on unload; apps unseen for 40 d pruned). Coverage = only times the
+  dashboard was open (x-axis is real time, gaps compress, no
+  interpolation). `/metrics` is therefore polled on EVERY tab (views still
+  render only on their own route) so the archive keeps collecting.
 - Clients: `renderClients()` builds the shell once; `renderClientsData(m)`
   per poll does in-place `[data-role=...]` updates and rebuilds only the
   limits + cursors tables. `mergedApps(m)` = live + file-only apps. Perms
@@ -415,6 +427,12 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   (`detachApps`/`detachNames`) persist only when they carry content.
   Weight chip → `openWeightPop` popover (0.1–10 step 0.1, auto-POST
   /app_weight on release); `w-alt` accent when ≠ 1.
+  Tree rows align like a table via FIXED-WIDTH meta slots
+  (`.tm-weight`/`.weight-label` 50px, `.tm-spark` 70px, `.tm-rps` 11ch,
+  `.tm-limit` 10ch, `.tm-p50` 11ch, `.tm-seen` 9ch, `.blockbtn` min-width
+  70px): app rows carry weight+limit, name rows carry `seen` + spacer
+  slots (`.tm-weight`, `.tm-limit`) where apps have real content — the name
+  sparkline lives INSIDE `.tree-meta` (first position), not left of it.
 - Permission editor badge model: 6 badges per row (5 verbs + INDEX), click cycles allow → deny
   → inherit (explicit SOLID / inherited DASHED / none HOLLOW; collections
   inherit-db GRAY FILL). Collections: caret expands a db row → real
