@@ -1,7 +1,7 @@
 // Overview tab: stat chips, system mini-charts, the all-apps RPS chart
 // (shared scale + selectable time window) and the top-apps traffic table.
 import { $, el, esc, fmtNum, fmtBytes, fmtUptime } from "./core";
-import { sparkline, drawMini, lineColor, getCss } from "./charts";
+import { sparkline, drawMini, lineColor, getCss, withAlpha } from "./charts";
 import { rpsArchive, RPS_WINDOWS, getRpsWindowIdx, setRpsWindowIdx } from "./rps-archive";
 import { updateMongoStatus } from "./mongo";
 import { lastMetrics, Metrics, AppNode, systemSeries, systemHistory } from "./state";
@@ -93,7 +93,14 @@ export function renderOverview() {
           style: "margin-left:auto;font-weight:400",
         }),
       ]),
-      el("div", { id: "ov-rps-legend", class: "rps-legend" }),
+      el("div", { class: "rps-head" }, [
+        el("div", { id: "ov-rps-legend", class: "rps-legend" }),
+        el(
+          "button",
+          { id: "ov-rps-details", class: "btn btn-outline btn-small", title: "stacked per-name_id breakdown" },
+          ["Show details"],
+        ),
+      ]),
       el("canvas", { id: "ov-rps-canvas", style: "width:100%;height:190px;display:block" }),
       el("div", { class: "rps-controls" }, [
         el(
@@ -105,6 +112,11 @@ export function renderOverview() {
     ]),
   );
   $("#ov-rps-win").onclick = () => openWinPop($("#ov-rps-win"));
+  $("#ov-rps-details").onclick = () => openDetailsPop($("#ov-rps-details"));
+  const rpsCanvas = $("#ov-rps-canvas") as HTMLCanvasElement;
+  rpsCanvas.addEventListener("mousemove", onRpsHover);
+  rpsCanvas.addEventListener("mouseleave", () => setRpsHover(null));
+  rpsHoverT = null;
   v.append(
     el("div", { class: "card", id: "ov-traffic" }, [
       el("h3", {}, [
@@ -271,14 +283,109 @@ function fmtAxisTime(ms: number, windowSec: number): string {
   return d.toLocaleDateString([], { year: "2-digit", month: "short" });
 }
 
+/* linear interpolation of a series at time t (clamped at both ends) */
+function interp(pts: { t: number; v: number }[], t: number): number {
+  if (!pts.length) return 0;
+  if (t <= pts[0].t) return pts[0].v;
+  const last = pts[pts.length - 1];
+  if (t >= last.t) return last.v;
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].t >= t) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const f = (t - a.t) / Math.max(1e-9, b.t - a.t);
+      return a.v + (b.v - a.v) * f;
+    }
+  }
+  return last.v;
+}
+
+interface RpsSeries {
+  app: string;
+  color: string;
+  pts: { t: number; v: number }[];
+}
+
+/* one expanded app: its name_ids ranked by contribution (biggest first) and
+   the cumulative levels of the stack — cum[i][k] = sum of names 0..i at
+   times[k], so cum[n-1] ≈ the app line (drawn separately at full opacity) */
+interface NameStack {
+  app: string;
+  color: string;
+  names: string[];
+  times: number[];
+  cum: number[][];
+  ownPts: { t: number; v: number }[][]; // raw per-name points (hover values)
+}
+
+/* which apps are expanded into a stacked name_id breakdown (persisted) */
+const RPS_DETAILS_LS = "xdb-rps-details";
+let detailApps: Set<string> = new Set(
+  (() => {
+    try {
+      const d = JSON.parse(localStorage.getItem(RPS_DETAILS_LS) ?? "[]");
+      return Array.isArray(d) ? d.filter((x) => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  })(),
+);
+function saveDetailApps() {
+  localStorage.setItem(RPS_DETAILS_LS, JSON.stringify([...detailApps]));
+}
+
+function buildNameStacks(m: Metrics, apps: string[], win: number, nowSec: number): NameStack[] {
+  const stacks: NameStack[] = [];
+  for (const app of apps) {
+    if (!detailApps.has(app)) continue;
+    const a = m.apps.find((x) => x.app === app);
+    if (!a || !a.names.length) continue;
+    const keys = a.names.map((n) => ({ name: n.name, key: `name:${n.name}@${app}`, rps: n.rps }));
+    const data = rpsArchive.window(
+      keys.map((k) => k.key),
+      win,
+      nowSec,
+    );
+    // rank by contribution over the displayed window (fallback: live rps)
+    const ranked = keys
+      .map((k) => {
+        const pts = data.get(k.key) ?? [];
+        let sum = 0;
+        for (const p of pts) sum += p.v;
+        return { name: k.name, pts, contrib: Math.max(pts.length ? sum / pts.length : 0, k.rps) };
+      })
+      .filter((k) => k.contrib > 0)
+      .sort((x, y) => y.contrib - x.contrib);
+    if (!ranked.length) continue;
+    const times = Array.from(new Set(ranked.flatMap((r) => r.pts.map((p) => p.t)))).sort((x, y) => x - y);
+    if (!times.length) continue;
+    const cum: number[][] = [];
+    for (let i = 0; i < ranked.length; i++) {
+      const own = times.map((t) => interp(ranked[i].pts, t));
+      cum.push(times.map((_, k) => (i === 0 ? own[k] : cum[i - 1][k] + own[k])));
+    }
+    stacks.push({
+      app,
+      color: lineColor(app),
+      names: ranked.map((r) => r.name),
+      times,
+      cum,
+      ownPts: ranked.map((r) => r.pts),
+    });
+  }
+  return stacks;
+}
+
 function updateRpsChart(m: Metrics) {
   const canvas = $("#ov-rps-canvas") as HTMLCanvasElement | null;
   if (!canvas) return;
   const nowMs = Date.now();
   const [, win] = RPS_WINDOWS[getRpsWindowIdx()];
   const apps = m.apps.map((a) => a.app).sort();
-  const data = rpsArchive.window(apps, win, Math.floor(nowMs / 1000));
+  const nowSec = Math.floor(nowMs / 1000);
+  const data = rpsArchive.window(apps, win, nowSec);
   const series = apps.map((app) => ({ app, color: lineColor(app), pts: data.get(app) ?? [] }));
+  const stacks = buildNameStacks(m, apps, win, nowSec);
   let peak = 0;
   for (const s of series) for (const p of s.pts) if (p.v > peak) peak = p.v;
   const legend = $("#ov-rps-legend");
@@ -304,14 +411,24 @@ function updateRpsChart(m: Metrics) {
   }
   const btn = $("#ov-rps-win");
   if (btn) btn.textContent = RPS_WINDOWS[getRpsWindowIdx()][0];
-  drawAppRpsChart(canvas, series, win, nowMs);
+  const dbtn = $("#ov-rps-details");
+  if (dbtn) dbtn.textContent = detailApps.size ? `Show details · ${detailApps.size}` : "Show details";
+  rpsDrawArgs = { canvas, series, stacks, windowSec: win, nowMs };
+  drawAppRpsChart(canvas, series, stacks, win, nowMs, rpsHoverT);
 }
+
+const RPS_ML = 46,
+  RPS_MR = 10,
+  RPS_MT = 8,
+  RPS_MB = 20;
 
 function drawAppRpsChart(
   canvas: HTMLCanvasElement,
-  series: { app: string; color: string; pts: { t: number; v: number }[] }[],
+  series: RpsSeries[],
+  stacks: NameStack[],
   windowSec: number,
   nowMs: number,
+  hoverSec: number | null,
 ) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || 600;
@@ -321,10 +438,10 @@ function drawAppRpsChart(
   const ctx = canvas.getContext("2d")!;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  const ml = 46,
-    mr = 10,
-    mt = 8,
-    mb = 20;
+  const ml = RPS_ML,
+    mr = RPS_MR,
+    mt = RPS_MT,
+    mb = RPS_MB;
   const iw = w - ml - mr,
     ih = h - mt - mb;
   const t1 = nowMs / 1000,
@@ -356,14 +473,57 @@ function drawAppRpsChart(
     ctx.fillStyle = txt;
     ctx.fillText(fmtAxisTime((t0 + frac * windowSec) * 1000, windowSec), ml + frac * iw, h - 6);
   }
+  const xPix = (t: number) => ml + ((t - t0) / windowSec) * iw;
+  const yPix = (v: number) => mt + ih - (Math.min(v, vmax) / vmax) * ih;
+
+  // stacked name_id breakdown UNDER the app lines: filled bands between
+  // cumulative levels (band i = names[i]), biggest contributor at the bottom
+  // with the least transparency, growing transparency going up. The top
+  // level is NOT stroked — it is the app line, drawn below at full opacity.
+  for (const st of stacks) {
+    const n = st.names.length;
+    const bandA = (i: number) => (n <= 1 ? 0.3 : 0.3 - (0.22 * i) / (n - 1));
+    const lineA = (i: number) => (n <= 2 ? 0.85 : 0.85 - (0.55 * i) / (n - 2));
+    for (let i = 0; i < n; i++) {
+      ctx.beginPath();
+      for (let k = 0; k < st.times.length; k++) {
+        const x = xPix(st.times[k]),
+          y = yPix(st.cum[i][k]);
+        k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      if (i > 0) {
+        for (let k = st.times.length - 1; k >= 0; k--)
+          ctx.lineTo(xPix(st.times[k]), yPix(st.cum[i - 1][k]));
+      } else {
+        ctx.lineTo(xPix(st.times[st.times.length - 1]), mt + ih);
+        ctx.lineTo(xPix(st.times[0]), mt + ih);
+      }
+      ctx.closePath();
+      ctx.fillStyle = withAlpha(st.color, bandA(i));
+      ctx.fill();
+    }
+    ctx.lineWidth = 1.4;
+    ctx.lineJoin = "round";
+    for (let i = 0; i < n - 1; i++) {
+      ctx.beginPath();
+      for (let k = 0; k < st.times.length; k++) {
+        const x = xPix(st.times[k]),
+          y = yPix(st.cum[i][k]);
+        k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = withAlpha(st.color, lineA(i));
+      ctx.stroke();
+    }
+  }
+
   // one line per app, all on the shared scale (x = real time — gaps compress)
   for (const s of series) {
     if (s.pts.length < 1) continue;
     ctx.beginPath();
     let started = false;
     for (const p of s.pts) {
-      const x = ml + ((p.t - t0) / windowSec) * iw;
-      const y = mt + ih - (Math.min(p.v, vmax) / vmax) * ih;
+      const x = xPix(p.t);
+      const y = yPix(p.v);
       if (!started) {
         ctx.moveTo(x, y);
         started = true;
@@ -374,6 +534,196 @@ function drawAppRpsChart(
     ctx.lineJoin = "round";
     ctx.stroke();
   }
+
+  drawNameLabels(ctx, stacks, xPix, yPix, w, ml, iw);
+  if (hoverSec != null && hoverSec >= t0 && hoverSec <= t1)
+    drawRpsHover(ctx, w, h, ml, mt, mb, iw, ih, t0, windowSec, series, stacks, hoverSec);
+}
+
+/* name_id labels at the right edge — each right below its own cumulative
+   line (kept ≥12px apart when lines are close together) */
+function drawNameLabels(
+  ctx: CanvasRenderingContext2D,
+  stacks: NameStack[],
+  xPix: (t: number) => number,
+  yPix: (v: number) => number,
+  h: number,
+  ml: number,
+  iw: number,
+) {
+  if (!stacks.length) return;
+  const labels: { text: string; y: number; color: string }[] = [];
+  for (const st of stacks) {
+    const last = st.times.length - 1;
+    for (let i = 0; i < st.names.length; i++)
+      labels.push({ text: st.names[i], y: yPix(st.cum[i][last]), color: st.color });
+  }
+  labels.sort((a, b) => b.y - a.y); // bottom first
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(ml, 0, iw + RPS_MR + 2, h);
+  ctx.clip();
+  ctx.font = "9.5px ui-monospace, Consolas, monospace";
+  ctx.textAlign = "right";
+  const maxW = Math.max(60, Math.min(170, iw * 0.45));
+  let prevY = Infinity;
+  for (const lb of labels) {
+    let text = lb.text;
+    while (text.length > 1 && ctx.measureText(text).width > maxW) text = text.slice(0, -1);
+    if (text !== lb.text) text += "…";
+    let ly = lb.y + 11;
+    if (prevY !== Infinity && ly > prevY - 12) ly = prevY - 12;
+    prevY = ly;
+    ctx.fillStyle = withAlpha(lb.color, 0.95);
+    ctx.fillText(text, ml + iw - 2, ly);
+  }
+  ctx.restore();
+}
+
+/* ---- hover: dashed crosshair + light tooltip (Chart.js-style) ---- */
+
+function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawRpsHover(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  ml: number,
+  mt: number,
+  mb: number,
+  iw: number,
+  ih: number,
+  t0: number,
+  windowSec: number,
+  series: RpsSeries[],
+  stacks: NameStack[],
+  t: number,
+) {
+  const x = ml + ((t - t0) / windowSec) * iw;
+  // vertical crosshair at the hovered time
+  ctx.strokeStyle = withAlpha(getCss("--on-surface-variant"), 0.6);
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(Math.round(x) + 0.5, mt);
+  ctx.lineTo(Math.round(x) + 0.5, mt + ih);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // rows: every app (legend order), name_ids nested under expanded ones
+  interface Row {
+    app: boolean;
+    label: string;
+    value: number;
+    color: string;
+  }
+  const rows: Row[] = [];
+  for (const s of series) {
+    rows.push({ app: true, label: s.app, value: interp(s.pts, t), color: s.color });
+    const st = stacks.find((x2) => x2.app === s.app);
+    if (st)
+      for (let i = 0; i < st.names.length; i++)
+        rows.push({ app: false, label: st.names[i], value: interp(st.ownPts[i], t), color: st.color });
+  }
+  const vals = rows.map((r) => fmtNum(r.value, 1));
+
+  // measure + place the panel (flip to the left near the right edge)
+  const pad = 8,
+    rowH = 14,
+    headH = 16,
+    nameIndent = 28;
+  ctx.font = "10.5px system-ui, sans-serif";
+  let labelW = 0;
+  for (const r of rows) labelW = Math.max(labelW, ctx.measureText(r.label).width);
+  ctx.font = "10.5px ui-monospace, Consolas, monospace";
+  let valW = 0;
+  for (const v of vals) valW = Math.max(valW, ctx.measureText(v).width);
+  const tw = pad * 2 + nameIndent + labelW + 10 + valW;
+  const th = pad * 2 + headH + rows.length * rowH;
+  let px = x + 12;
+  if (px + tw > w - 4) px = x - 12 - tw;
+  let py = mt + 4;
+  if (py + th > h - mb) py = Math.max(mt, h - mb - th);
+
+  rr(ctx, px, py, tw, th, 8);
+  ctx.fillStyle = withAlpha(getCss("--surface"), 0.94);
+  ctx.fill();
+  ctx.strokeStyle = getCss("--outline-variant");
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.fillStyle = getCss("--on-surface-variant");
+  ctx.font = "10.5px system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText(fmtAxisTime(t * 1000, windowSec), px + pad, py + pad + 9);
+
+  // vertical app-color bar spanning each expanded app row + its name rows
+  for (let i = 0; i < rows.length; i++) {
+    if (!rows[i].app) continue;
+    let j = i;
+    while (j + 1 < rows.length && !rows[j + 1].app) j++;
+    if (j > i) {
+      const y0 = py + pad + headH + i * rowH + 2;
+      const y1 = py + pad + headH + j * rowH + rowH - 2;
+      ctx.fillStyle = withAlpha(rows[i].color, 0.65);
+      ctx.fillRect(px + pad + 12, y0, 2, y1 - y0);
+    }
+  }
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const top = py + pad + headH + i * rowH;
+    if (r.app) {
+      ctx.fillStyle = r.color;
+      ctx.fillRect(px + pad, top + 3, 8, 8);
+    }
+    ctx.fillStyle = getCss(r.app ? "--on-surface" : "--on-surface-variant");
+    ctx.font = (r.app ? "600 " : "") + "10.5px system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(r.label, px + pad + (r.app ? 17 : nameIndent), top + 10);
+    ctx.font = "10.5px ui-monospace, Consolas, monospace";
+    ctx.fillStyle = getCss("--on-surface");
+    ctx.textAlign = "right";
+    ctx.fillText(vals[i], px + tw - pad, top + 10);
+  }
+}
+
+/* hover state — cached draw args let mousemove redraw without a re-poll */
+let rpsDrawArgs: {
+  canvas: HTMLCanvasElement;
+  series: RpsSeries[];
+  stacks: NameStack[];
+  windowSec: number;
+  nowMs: number;
+} | null = null;
+let rpsHoverT: number | null = null;
+
+function setRpsHover(t: number | null) {
+  if (rpsHoverT === t) return;
+  rpsHoverT = t;
+  const d = rpsDrawArgs;
+  if (d) drawAppRpsChart(d.canvas, d.series, d.stacks, d.windowSec, d.nowMs, t);
+}
+
+function onRpsHover(ev: MouseEvent) {
+  const d = rpsDrawArgs;
+  if (!d) return;
+  const canvas = ev.currentTarget as HTMLCanvasElement;
+  const rect = canvas.getBoundingClientRect();
+  const x = ev.clientX - rect.left;
+  const iw = rect.width - RPS_ML - RPS_MR;
+  if (iw <= 0 || x < RPS_ML || x > RPS_ML + iw) {
+    setRpsHover(null);
+    return;
+  }
+  setRpsHover(d.nowMs / 1000 - d.windowSec + ((x - RPS_ML) / iw) * d.windowSec);
 }
 
 /* window-selector popover under the chart (weight-pop pattern) */
@@ -394,6 +744,7 @@ function winPopDocHandler(ev: MouseEvent) {
 
 function openWinPop(btn: HTMLElement) {
   closeWinPop();
+  closeDetailsPop();
   const pop = el("div", { class: "win-pop" });
   const row = el("div", { class: "wp-row" });
   const val = el("span", { class: "wp-val" }, [RPS_WINDOWS[getRpsWindowIdx()][0]]);
@@ -421,4 +772,69 @@ function openWinPop(btn: HTMLElement) {
   document.addEventListener("mousedown", winPopDocHandler);
   winPopDoc = true;
   slider.focus();
+}
+
+/* "Show details" popover: per-app switches for the stacked name_id
+   breakdown (multi-select, persisted) */
+let detPopEl: HTMLElement | null = null;
+let detPopDoc = false;
+
+function closeDetailsPop() {
+  detPopEl?.remove();
+  detPopEl = null;
+  if (detPopDoc) {
+    document.removeEventListener("mousedown", detPopDocHandler);
+    detPopDoc = false;
+  }
+}
+function detPopDocHandler(ev: MouseEvent) {
+  if (detPopEl && !detPopEl.contains(ev.target as Node)) closeDetailsPop();
+}
+
+function openDetailsPop(btn: HTMLElement) {
+  if (detPopEl) {
+    closeDetailsPop();
+    return;
+  }
+  closeWinPop();
+  const pop = el("div", { class: "det-pop" });
+  pop.append(el("div", { class: "dp-title" }, ["name_id breakdown"]));
+  const list = el("div", { class: "dp-list" });
+  const apps = (lastMetrics ? mApps(lastMetrics) : [...detailApps]).sort();
+  if (!apps.length)
+    list.append(el("div", { class: "wp-hint" }, ["no apps yet — they appear once they send requests"]));
+  for (const app of apps) {
+    const row = el("label", { class: "dp-row", title: esc(app) });
+    const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
+    cb.checked = detailApps.has(app);
+    cb.addEventListener("change", () => {
+      if (cb.checked) detailApps.add(app);
+      else detailApps.delete(app);
+      saveDetailApps();
+      if (lastMetrics) updateRpsChart(lastMetrics);
+    });
+    row.append(
+      cb,
+      el("span", { class: "dp-sw", style: "background:" + lineColor(app) }),
+      el("span", { class: "dp-name" }, [esc(app)]),
+    );
+    list.append(row);
+  }
+  pop.append(list);
+  pop.append(
+    el("div", { class: "wp-hint" }, [
+      "stacks each name_id of the selected app(s) · the app line tops the stack",
+    ]),
+  );
+  pop.addEventListener("mousedown", (e) => e.stopPropagation());
+  (btn.parentElement as HTMLElement).appendChild(pop);
+  detPopEl = pop;
+  document.addEventListener("mousedown", detPopDocHandler);
+  detPopDoc = true;
+}
+
+function mApps(m: Metrics): string[] {
+  const ids = new Set(m.apps.map((a) => a.app));
+  for (const a of detailApps) ids.add(a); // keep selections for apps not live right now
+  return [...ids];
 }

@@ -75,59 +75,70 @@ class RpsArchive {
     return this.firstT;
   }
 
-  /* `apps` is structurally typed (app id + current rps) to avoid a cycle
-     with state.ts — RpsArchive has no runtime dependency on Metrics. */
-  sample(apps: { app: string; rps: number }[], nowMs: number) {
+  /* `apps` is structurally typed (app id + current rps + optional per-name
+     rates) to avoid a cycle with state.ts — RpsArchive has no runtime
+     dependency on Metrics. name_id series are stored under the same map
+     with the server's "name:<id>@<app>" key convention. */
+  sample(
+    apps: { app: string; rps: number; names?: { name: string; rps: number }[] }[],
+    nowMs: number,
+  ) {
     const tSec = Math.floor(nowMs / 1000);
     if (!this.firstT) this.firstT = tSec;
     this.dirty = true;
     for (const a of apps) {
-      let s = this.series[a.app];
-      if (!s) {
-        s = { lastT: tSec, tiers: RPS_TIERS.map(() => ({ ts: [], vs: [], open: null })) };
-        this.series[a.app] = s;
-      }
-      s.lastT = tSec;
-      const v = Math.max(0, a.rps);
-      for (let i = 0; i < RPS_TIERS.length; i++) {
-        const [res, keep] = RPS_TIERS[i];
-        const tier = s.tiers[i];
-        const bt = Math.floor(tSec / res) * res;
-        if (tier.open && tier.open.t === bt) {
-          tier.open.sum += v;
-          tier.open.n++;
-        } else {
-          if (tier.open) {
-            tier.ts.push(tier.open.t);
-            tier.vs.push(tier.open.sum / tier.open.n);
-          }
-          tier.open = { t: bt, sum: v, n: 1 };
-          while (tier.ts.length && tier.ts[0] < tSec - keep) {
-            tier.ts.shift();
-            tier.vs.shift();
-          }
-        }
-      }
+      this.pushSample(a.app, Math.max(0, a.rps), tSec);
+      for (const n of a.names ?? [])
+        this.pushSample(`name:${n.name}@${a.app}`, Math.max(0, n.rps), tSec);
     }
     if (Date.now() - this.lastSaveMs > 30000) this.save();
   }
 
-  /* buckets of the finest tier covering `windowSec` (closed + the open one) */
-  window(apps: string[], windowSec: number, nowSec: number): Map<string, { t: number; v: number }[]> {
+  private pushSample(key: string, v: number, tSec: number) {
+    let s = this.series[key];
+    if (!s) {
+      s = { lastT: tSec, tiers: RPS_TIERS.map(() => ({ ts: [], vs: [], open: null })) };
+      this.series[key] = s;
+    }
+    s.lastT = tSec;
+    for (let i = 0; i < RPS_TIERS.length; i++) {
+      const [res, keep] = RPS_TIERS[i];
+      const tier = s.tiers[i];
+      const bt = Math.floor(tSec / res) * res;
+      if (tier.open && tier.open.t === bt) {
+        tier.open.sum += v;
+        tier.open.n++;
+      } else {
+        if (tier.open) {
+          tier.ts.push(tier.open.t);
+          tier.vs.push(tier.open.sum / tier.open.n);
+        }
+        tier.open = { t: bt, sum: v, n: 1 };
+        while (tier.ts.length && tier.ts[0] < tSec - keep) {
+          tier.ts.shift();
+          tier.vs.shift();
+        }
+      }
+    }
+  }
+
+  /* buckets of the finest tier covering `windowSec` (closed + the open one) —
+     works for any series key: app ids and "name:<id>@<app>" breakdown keys */
+  window(keys: string[], windowSec: number, nowSec: number): Map<string, { t: number; v: number }[]> {
     let ti = RPS_TIERS.findIndex(([, keep]) => keep >= windowSec);
     if (ti < 0) ti = RPS_TIERS.length - 1;
     const res = RPS_TIERS[ti][0];
     const t0 = nowSec - windowSec;
     const out = new Map<string, { t: number; v: number }[]>();
-    for (const app of apps) {
-      const tier = this.series[app]?.tiers[ti];
+    for (const key of keys) {
+      const tier = this.series[key]?.tiers[ti];
       const pts: { t: number; v: number }[] = [];
       if (tier) {
         for (let i = 0; i < tier.ts.length; i++)
           if (tier.ts[i] + res > t0) pts.push({ t: tier.ts[i] + res / 2, v: tier.vs[i] });
         if (tier.open && tier.open.n) pts.push({ t: tier.open.t + res / 2, v: tier.open.sum / tier.open.n });
       }
-      out.set(app, pts);
+      out.set(key, pts);
     }
     return out;
   }

@@ -49,6 +49,18 @@ export function getCss(v: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(v).trim() || "#6d4aff";
 }
 
+/* #rrggbb + alpha → rgba() string (palette colors are hex; alpha for
+   stacked name_id lines/bands and the hover crosshair) */
+export function withAlpha(hex: string, a: number): string {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const r = parseInt(full.slice(0, 2), 16) || 0;
+  const g = parseInt(full.slice(2, 4), 16) || 0;
+  const b = parseInt(full.slice(4, 6), 16) || 0;
+  const al = Math.round(Math.max(0, Math.min(1, a)) * 1000) / 1000;
+  return `rgba(${r},${g},${b},${al})`;
+}
+
 /* single-line mini chart with a soft area fill — no legend, no axis text */
 export function drawMini(canvas: HTMLCanvasElement, data: number[], color: string) {
   if (!canvas) return;
