@@ -2,12 +2,12 @@
 
 First real run: `docker compose up --build -d` worked end to end on the dev
 machine (Docker Desktop 29.7.2, WSL2 backend, overlayfs). The integration
-battery (local rust, `cargo test`) against the docker stack is 116/118 —
+battery (local rust, `cargo test`) against the docker stack is 180/182 —
 the 2 watcher_reload failures are a Docker-Desktop-only limitation, see
 "inotify / file watchers" below. Re-verified 2026-08-17 against the
 rebuilt image (post build-speed fixes + dummy-binary fix): 108/110 as
 counted then; re-verified 2026-08-18 (indexes endpoints): same 2 failures,
-116/118.
+180/182.
 Note for running the battery: on Windows the PATH `bash` is a broken WSL
 stub — invoke git-bash explicitly for tests/bootstrap.sh
 (`& "C:\Program Files\Git\bin\bash.exe" tests/bootstrap.sh ...`).
@@ -60,7 +60,7 @@ watcher (virtiofsd implements no FUSE notify). Consequences:
 - `cargo test` against a Docker-Desktop API: `watcher_reload` fails
   (`perms_file_watcher_reload` at the "watcher picked up the appended app"
   assert; `reload_endpoints` then dies on the poisoned suite lock — it passes
-  standalone). Everything else is green (116/118, re-verified 2026-08-18).
+  standalone). Everything else is green (180/182, re-verified 2026-08-20 with runtime.keyset_type_brackets=id-only in server.yml).
   Live A/B proof: a host-side `touch authorized_keys.yml` fires NO reload
   log line in `docker logs xavierdb`, while the identical battery run on bare
   metal logs `authorized_keys.yml reloaded from disk` for both watcher

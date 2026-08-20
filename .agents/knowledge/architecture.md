@@ -137,7 +137,18 @@
   bracket-fallback branch (null boundaries skip the `$gt/$lt` branch to avoid
   re-serving nulls; NaN boundaries continue with `$gte: -Inf` and a `{f: NaN}`
   branch — NaN sorts first ascending on MongoDB 8; a `$gt` there would miss
-  the -Inf tie-group, caught by the equivalence test). ARRAY sort values are
+  the -Inf tie-group, caught by the equivalence test). The type-bracket
+  branches are gated by `runtime.keyset_type_brackets` (server.yml,
+  startup-only, 2026-08-20): `"all"` (default) keeps them on every column;
+  `"id-only"` drops them for `_id` columns (prod verified every collection's
+  `_id` is a single BSON type — all strings or all ObjectIds); `"off"` drops
+  them everywhere. Rationale: `$type` cannot use index bounds, so with
+  "all" a deep keyset page over an `_id`-sorted collection is a residual
+  filter over a full `_id` index scan (prod: ~183k keys examined per 101-doc
+  page, ~250 ms, the main CPU hog); with "id-only" page 2+ compiles to a
+  bare `{_id: {$gt}}` — verified keysExamined == limit+1. A single-arm
+  keyset `$or` and an empty user filter collapse away (no `$or`/`$and`
+  wrappers) — planner-friendlier and readable in the profiler. ARRAY sort values are
   refused with 400 when a page needs continuation (element-wise array sort is
   not representable in a keyset cursor).
 - Filter hardening: server-side script operators `$where`/`$function` are

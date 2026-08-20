@@ -6,7 +6,7 @@ npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (on
 #   npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
 cargo build                      # debug; on OSes that lock running executables this
                                  #   fails while the server is running — see restart-ritual.md
-cargo test                       # 55 unit + 118 integration tests (tests/); needs a running server
+cargo test                       # 64 unit + 118 integration tests (tests/); needs a running server
                                  #   + MongoDB — see "Integration battery" below; tests talk to
                                  #   real Mongo unconditionally (XDB_TB_MONGO_URI, default
                                  #   mongodb://localhost:27017; the env-gated unit equivalence

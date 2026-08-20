@@ -8,6 +8,18 @@
   contains an **array** value — MongoDB's element-wise array sort cannot be
   represented in a keyset cursor; silent loss/loops would be worse. NaN/±Inf
   sort values ARE handled (NaN sorts first ascending on MongoDB 8).
+- `runtime.keyset_type_brackets` `"id-only"`/`"off"` (prod runs `"id-only"`,
+  2026-08-20) trades the type-bracket safety branches for index seekability.
+  STANDING RISK (accepted): it relies on every `_id` (id-only) / every sort
+  field (off) being a single BSON type per collection. If someone writes a
+  mixed-type `_id` directly to MongoDB (bypassing XavierDB), paginated walks
+  in that collection can silently skip documents past a type transition.
+  Verified once per collection with
+  `db.<coll>.aggregate([{$group:{_id:{$type:"$_id"}}}])` (2026-08-20: all
+  `bdm` collections single-typed — strings, or ObjectIds in guildwars/loots/
+  nodes). A null/undefined `_id` boundary falls back to the full bracket set
+  automatically (keyset_condition), but other mixed-type boundaries do not.
+  Re-verify after any new collection is created.
 - `/auth` and dashboard login have SEPARATE per-IP throttles (dashboard
   login: server.yml `admin.max_logins_per_ip_per_minute`, default 5; `/auth`:
   `config.auth.max_per_minute_per_ip`, default 30). Both key on the peer
