@@ -14,15 +14,20 @@ build (esbuild) and the embed (rustc) are TWO separate steps.
   - `core.ts` — `$`/`el`/`esc`/fmt* helpers, snackbar, confirm dialog
   - `state.ts` — `api()` fetch wrapper, Metrics/AppNode/ClientNode types,
   `lastMetrics`, login view, hash router, poll loop (polls on EVERY tab so
-  the RPS archive keeps sampling). NOTE: deliberate import cycle
+  the RPS archive keeps sampling; the sample call also carries per-name
+  rps). NOTE: deliberate import cycle
   state ↔ view-* (safe: cross-uses happen at call time, never at module
   evaluation).
-  - `rps-archive.ts` — tiered long-window RPS history (localStorage)
-  - `charts.ts` — sparkline, drawMini, getCss, lineColor palette
+  - `rps-archive.ts` — tiered long-window RPS history (localStorage); stores
+  app series AND `name:<id>@<app>` series (feeds the "Show details"
+  stacked breakdown) under the same map + localStorage
+  `xdb-rps-archive-v1`
+  - `charts.ts` — sparkline, drawMini, getCss, lineColor palette, withAlpha
   - `mongo.ts` — topbar MongoDB status widget
   - `view-overview.ts` / `view-clients.ts` / `view-config.ts` / `view-logs.ts`
   — one module per tab (overview holds the all-apps RPS chart + window
-  popover)
+  popover + "Show details" name_id breakdown popover + hover
+  crosshair/tooltip — see knowledge/architecture.md "Overview")
   - `perm-widget.ts` — permission editor + effective rules (driven by
   view-clients; receives the live db list via `PermCtx.dbs` to stay
   cycle-free)
@@ -48,8 +53,14 @@ the embed is compile-time**), stub fetch/matchMedia, simulate clicks, and
 assert on the DOM after input/change events, Save clicks, and simulated
 route re-entry. The config-tab repro pattern: mutable serverConfig + echo
 POST response + `postBodies` capture; asserts slider value + readout after
-edits and after Save. To test other views, extend the stub routes. Harness
-copies live in the dev machine's temp dir (see `.pi/notes/credentials.md`).
+edits and after Save. To test other views, extend the stub routes. For
+CANVAS rendering (chart draw calls), stub
+`HTMLCanvasElement.prototype.getContext` with a recording Proxy that logs
+every method call + property set (jsdom has no canvas) and stub
+`measureText` to `{width: len*5.5}`; see `details-repro.mjs` (asserts stack
+line alphas, band fills, name labels, crosshair dashes, tooltip rows).
+Harness copies live in the dev machine's temp dir (see
+`.pi/notes/credentials.md`).
 
 ## UI gotchas (architecture context)
 

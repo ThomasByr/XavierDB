@@ -412,12 +412,34 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   AFTER the row is attached — `clientWidth` is 0 before) / rps / p50 / limit
   / status badge; header summary = active count, summed rps, worst p50,
   lifetime `health.app.total_requests`.
+- RPS chart "Show details" breakdown (2026-08-18): a `#ov-rps-details`
+  button (top right of the chart card, in `.rps-head` next to the legend)
+  opens the `.det-pop` popover — one switch per app_id (multi-select,
+  persisted in localStorage `xdb-rps-details`; button label shows the
+  selection count). For each selected app the chart draws a STACKED
+  name_id breakdown under the app line: name_ids ranked by average
+  contribution over the displayed window (biggest contributor at the
+  BOTTOM), band i = filled area between cumulative level i-1 and i
+  (sum of names 0..i at each sample time, so the top level ≈ the app
+  line, which is drawn separately at full opacity and is never
+  stroke-duplicated as a stack level). Line alpha 0.85 → 0.30 bottom-up,
+  band fill 0.30 → 0.08. name_id labels are drawn INSIDE the right edge of
+  the plot, each just below its own cumulative line (min 12 px apart,
+  ellipsized to 170px) — NOT in the top legend. Chart hover: dashed
+  vertical crosshair + light tooltip panel (Chart.js-style) listing every
+  app row with its interpolated rps, name_id rows nested under expanded
+  apps (indented, slightly offset, with a vertical app-color bar spanning
+  the group). Hover redraws from cached draw args (`rpsDrawArgs`), no
+  re-poll needed.
 - RPS long-window archive (`RpsArchive`, ts/rps-archive.ts): the server keeps only ~120
   ticks (~10 min) of `rps_history`, so the dashboard samples every /metrics
   poll into tiered average buckets (10s/1m/5m/30m/6h/1d resolutions) and
   persists them to localStorage `xdb-rps-archive-v1` (saved ≥ every 30 s +
-  on unload; apps unseen for 40 d pruned). Coverage = only times the
-  dashboard was open (x-axis is real time, gaps compress, no
+  on unload; apps unseen for 40 d pruned). Since 2026-08-18 the same
+  archive also samples each name_id series (keys `name:<id>@<app>`),
+  feeding the "Show details" breakdown; name history starts collecting
+  from first deployment of this feature and, like app history, covers only
+  times the dashboard was open (x-axis is real time, gaps compress, no
   interpolation). `/metrics` is therefore polled on EVERY tab (views still
   render only on their own route) so the archive keeps collecting.
 - Clients: `renderClients()` builds the shell once; `renderClientsData(m)`
