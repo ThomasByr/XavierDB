@@ -423,14 +423,26 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   (sum of names 0..i at each sample time, so the top level ≈ the app
   line, which is drawn separately at full opacity and is never
   stroke-duplicated as a stack level). Line alpha 0.85 → 0.30 bottom-up,
-  band fill 0.30 → 0.08. name_id labels are drawn INSIDE the right edge of
+  band fill 0.50 → 0.10 bottom-up (2026-08-20, was 0.30 → 0.08).
+  Contribution threshold (2026-08-20): name_ids under a % share of the
+  app's window-average traffic merge into ONE synthetic hatched band
+  `others (N)` (diagonal-hatch CanvasPattern per app color, fallback
+  translucent fill); the top contributor is always kept. The threshold
+  slider lives INSIDE the "Show details" popover (below the app switch
+  list, `.dp-thr-row` — 0–100 step 1, live re-render while the popover
+  stays open, persisted in localStorage `xdb-rps-threshold`, default 33 →
+  at most ~3 individual bands; 0 = every band; there is NO standalone
+  button in `.rps-head`). The hover
+  tooltip still lists EVERY name_id (`allNames`/`allPts` on NameStack),
+  merged ones included. name_id labels are drawn INSIDE the right edge of
   the plot, each just below its own cumulative line (min 12 px apart,
   ellipsized to 170px) — NOT in the top legend. Chart hover: dashed
   vertical crosshair + light tooltip panel (Chart.js-style) listing every
   app row with its interpolated rps, name_id rows nested under expanded
   apps (indented, slightly offset, with a vertical app-color bar spanning
   the group). Hover redraws from cached draw args (`rpsDrawArgs`), no
-  re-poll needed.
+  re-poll needed. jsdom verification: `threshold-repro.mjs` (see
+  skills/dashboard-rebuild.md).
 - RPS long-window archive (`RpsArchive`, ts/rps-archive.ts): the server keeps only ~120
   ticks (~10 min) of `rps_history`, so the dashboard samples every /metrics
   poll into tiered average buckets (10s/1m/5m/30m/6h/1d resolutions) and

@@ -58,7 +58,12 @@ CANVAS rendering (chart draw calls), stub
 `HTMLCanvasElement.prototype.getContext` with a recording Proxy that logs
 every method call + property set (jsdom has no canvas) and stub
 `measureText` to `{width: len*5.5}`; see `details-repro.mjs` (asserts stack
-line alphas, band fills, name labels, crosshair dashes, tooltip rows).
+line alphas, band fills, name labels, crosshair dashes, tooltip rows;
+pins the name_id threshold to 0% via localStorage before eval) and
+`threshold-repro.mjs` (2026-08-20: threshold slider INSIDE the details
+popover — no standalone button; others-band merge/hatch, 0.50→0.10 band
+ramp, 0%/high-threshold extremes, live slider re-render, full hover
+detail).
 Harness copies live in the dev machine's temp dir (see
 `.pi/notes/credentials.md`).
 
