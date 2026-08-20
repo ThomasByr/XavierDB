@@ -222,6 +222,176 @@ function seedSmoothers(m: Metrics) {
   }
 }
 
+/* ============================= rps archive ============================= */
+
+/* Long-window RPS history for the overview "all apps" chart. The server only
+   keeps ~120 ticks (~10 min) of sparkline history, so the dashboard samples
+   every /metrics poll and downsamples into tiered time buckets, persisted in
+   localStorage — windows up to a year survive reloads. Coverage is limited
+   to times the dashboard was open (gaps compress, they don't interpolate). */
+const RPS_TIERS: [resSec: number, keepSec: number][] = [
+  [10, 1800], // 30 min @ 10 s
+  [60, 10800], // 3 h @ 1 min
+  [300, 43200], // 12 h @ 5 min
+  [1800, 259200], // 3 d @ 30 min
+  [21600, 1814400], // 21 d @ 6 h
+  [86400, 34560000], // 400 d @ 1 d
+];
+const RPS_WINDOWS: [label: string, sec: number][] = [
+  ["1 minute", 60],
+  ["3 minutes", 180],
+  ["5 minutes", 300],
+  ["10 minutes", 600],
+  ["20 minutes", 1200],
+  ["30 minutes", 1800],
+  ["1 hour", 3600],
+  ["5 hours", 18000],
+  ["1 day", 86400],
+  ["3 days", 259200],
+  ["1 week", 604800],
+  ["2 weeks", 1209600],
+  ["1 month", 2629800],
+  ["2 months", 5259600],
+  ["3 months", 7889400],
+  ["1 year", 31557600],
+];
+const RPS_WINDOW_LS = "xdb-rps-window";
+let rpsWindowIdx = (() => {
+  const i = parseInt(localStorage.getItem(RPS_WINDOW_LS) ?? "", 10);
+  return Number.isInteger(i) && i >= 0 && i < RPS_WINDOWS.length ? i : 3; // 10 minutes
+})();
+
+const LINE_PALETTE = [
+  "#6d4aff",
+  "#00897b",
+  "#e53935",
+  "#f9a825",
+  "#3949ab",
+  "#8e24aa",
+  "#00acc1",
+  "#6d4c41",
+  "#43a047",
+  "#f4511e",
+  "#546e7a",
+  "#c2185b",
+];
+/* stable per-app color (hash of the id — survives re-renders and windows) */
+function lineColor(app: string): string {
+  let h = 5381;
+  for (let i = 0; i < app.length; i++) h = ((h * 33) ^ app.charCodeAt(i)) >>> 0;
+  return LINE_PALETTE[h % LINE_PALETTE.length];
+}
+
+interface RpsTier {
+  ts: number[];
+  vs: number[];
+  open: { t: number; sum: number; n: number } | null;
+}
+const RPS_ARCHIVE_LS = "xdb-rps-archive-v1";
+
+class RpsArchive {
+  private series: Record<string, { lastT: number; tiers: RpsTier[] }> = {};
+  private firstT = 0;
+  private lastSaveMs = 0;
+  private dirty = false;
+
+  static load(): RpsArchive {
+    const a = new RpsArchive();
+    try {
+      const d = JSON.parse(localStorage.getItem(RPS_ARCHIVE_LS) ?? "null");
+      if (d && typeof d.firstT === "number" && d.series && typeof d.series === "object") {
+        a.series = d.series;
+        a.firstT = d.firstT;
+        a.lastSaveMs = Date.now();
+      }
+    } catch {
+      /* corrupted archive — start fresh */
+    }
+    return a;
+  }
+
+  get startSec(): number {
+    return this.firstT;
+  }
+
+  sample(apps: AppNode[], nowMs: number) {
+    const tSec = Math.floor(nowMs / 1000);
+    if (!this.firstT) this.firstT = tSec;
+    this.dirty = true;
+    for (const a of apps) {
+      let s = this.series[a.app];
+      if (!s) {
+        s = { lastT: tSec, tiers: RPS_TIERS.map(() => ({ ts: [], vs: [], open: null })) };
+        this.series[a.app] = s;
+      }
+      s.lastT = tSec;
+      const v = Math.max(0, a.rps);
+      for (let i = 0; i < RPS_TIERS.length; i++) {
+        const [res, keep] = RPS_TIERS[i];
+        const tier = s.tiers[i];
+        const bt = Math.floor(tSec / res) * res;
+        if (tier.open && tier.open.t === bt) {
+          tier.open.sum += v;
+          tier.open.n++;
+        } else {
+          if (tier.open) {
+            tier.ts.push(tier.open.t);
+            tier.vs.push(tier.open.sum / tier.open.n);
+          }
+          tier.open = { t: bt, sum: v, n: 1 };
+          while (tier.ts.length && tier.ts[0] < tSec - keep) {
+            tier.ts.shift();
+            tier.vs.shift();
+          }
+        }
+      }
+    }
+    if (Date.now() - this.lastSaveMs > 30000) this.save();
+  }
+
+  /* buckets of the finest tier covering `windowSec` (closed + the open one) */
+  window(apps: string[], windowSec: number, nowSec: number): Map<string, { t: number; v: number }[]> {
+    let ti = RPS_TIERS.findIndex(([, keep]) => keep >= windowSec);
+    if (ti < 0) ti = RPS_TIERS.length - 1;
+    const res = RPS_TIERS[ti][0];
+    const t0 = nowSec - windowSec;
+    const out = new Map<string, { t: number; v: number }[]>();
+    for (const app of apps) {
+      const tier = this.series[app]?.tiers[ti];
+      const pts: { t: number; v: number }[] = [];
+      if (tier) {
+        for (let i = 0; i < tier.ts.length; i++)
+          if (tier.ts[i] + res > t0) pts.push({ t: tier.ts[i] + res / 2, v: tier.vs[i] });
+        if (tier.open && tier.open.n)
+          pts.push({ t: tier.open.t + res / 2, v: tier.open.sum / tier.open.n });
+      }
+      out.set(app, pts);
+    }
+    return out;
+  }
+
+  flushIfDirty() {
+    if (this.dirty) this.save();
+  }
+
+  save() {
+    this.lastSaveMs = Date.now();
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (const app of Object.keys(this.series))
+      if (nowSec - this.series[app].lastT > 40 * 86400) delete this.series[app]; // dropped apps
+    try {
+      localStorage.setItem(RPS_ARCHIVE_LS, JSON.stringify({ firstT: this.firstT, series: this.series }));
+      this.dirty = false;
+    } catch {
+      /* quota exceeded — keep running in memory */
+    }
+  }
+}
+const rpsArchive = RpsArchive.load();
+window.addEventListener("beforeunload", () => {
+  rpsArchive.flushIfDirty();
+});
+
 /* ============================= login ============================= */
 
 function showLogin() {
@@ -292,7 +462,9 @@ function route() {
   $$(".nav-item").forEach((n) => n.classList.toggle("active", n.getAttribute("data-route") === currentRoute));
   $("#page-title").textContent = currentRoute[0].toUpperCase() + currentRoute.slice(1);
   routes[currentRoute]();
-  pollEnabled = currentRoute === "overview" || currentRoute === "clients";
+  // metrics are polled on every tab — views render only on their own route,
+  // but the RPS archive (overview chart) must keep sampling everywhere
+  pollEnabled = true;
   restartPolling();
 }
 
@@ -316,6 +488,7 @@ async function poll() {
     lastMetrics = m;
     pollSeconds = m.config.poll_seconds || 2;
     seedSmoothers(m);
+    rpsArchive.sample(m.apps, Date.now());
     if (currentRoute === "overview") renderOverviewData(m);
     if (currentRoute === "clients") renderClientsData(m);
   } catch {
@@ -404,6 +577,28 @@ function renderOverview() {
     chartEls[d.key] = { value, canvas, sub };
   }
   v.append(
+    el("div", { class: "card", id: "ov-rps" }, [
+      el("h3", {}, [
+        "All apps · RPS",
+        el("span", {
+          class: "muted",
+          id: "ov-rps-summary",
+          style: "margin-left:auto;font-weight:400",
+        }),
+      ]),
+      el("div", { id: "ov-rps-legend", class: "rps-legend" }),
+      el("canvas", { id: "ov-rps-canvas", style: "width:100%;height:190px;display:block" }),
+      el("div", { class: "rps-controls" }, [
+        el(
+          "button",
+          { id: "ov-rps-win", class: "btn btn-outline btn-small", title: "horizontal axis window" },
+          [RPS_WINDOWS[rpsWindowIdx][0]],
+        ),
+      ]),
+    ]),
+  );
+  $("#ov-rps-win").onclick = () => openWinPop($("#ov-rps-win"));
+  v.append(
     el("div", { class: "card", id: "ov-traffic" }, [
       el("h3", {}, [
         "App traffic",
@@ -460,6 +655,7 @@ function renderOverviewData(m: Metrics) {
   updateMongoStatus(m.health);
   renderOvAlert(m);
   renderOvTraffic(m);
+  updateRpsChart(m);
 }
 
 /* blocked-apps alert strip — shown only while at least one app is blocked */
@@ -557,6 +753,171 @@ function ovTrafficRow(a: AppNode): {
     ]),
   );
   return { tr, canvas: cv };
+}
+
+/* ---- overview: all-apps RPS chart (shared y scale, selectable window) ---- */
+
+function fmtAxisTime(ms: number, windowSec: number): string {
+  const d = new Date(ms);
+  if (windowSec <= 2 * 86400)
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (windowSec <= 100 * 86400) return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return d.toLocaleDateString([], { year: "2-digit", month: "short" });
+}
+
+function updateRpsChart(m: Metrics) {
+  const canvas = $("#ov-rps-canvas") as HTMLCanvasElement | null;
+  if (!canvas) return;
+  const nowMs = Date.now();
+  const [, win] = RPS_WINDOWS[rpsWindowIdx];
+  const apps = m.apps.map((a) => a.app).sort();
+  const data = rpsArchive.window(apps, win, Math.floor(nowMs / 1000));
+  const series = apps.map((app) => ({ app, color: lineColor(app), pts: data.get(app) ?? [] }));
+  let peak = 0;
+  for (const s of series) for (const p of s.pts) if (p.v > peak) peak = p.v;
+  const legend = $("#ov-rps-legend");
+  if (legend) {
+    legend.textContent = "";
+    const cur = new Map(m.apps.map((a): [string, number] => [a.app, a.rps]));
+    for (const app of apps) {
+      legend.append(
+        el("span", { class: "rl", title: esc(app) }, [
+          el("i", { style: "background:" + lineColor(app) }),
+          esc(app) + " · " + fmtNum(cur.get(app) ?? 0, 1),
+        ]),
+      );
+    }
+  }
+  const summary = $("#ov-rps-summary");
+  if (summary) {
+    const sinceMs = rpsArchive.startSec * 1000;
+    const partial = sinceMs > 0 && sinceMs > nowMs - win * 1000;
+    summary.textContent =
+      `${apps.length} app(s) · shared scale · peak ${fmtNum(peak, 1)} rps` +
+      (partial ? ` · collecting since ${fmtAxisTime(sinceMs, win)}` : "");
+  }
+  const btn = $("#ov-rps-win");
+  if (btn) btn.textContent = RPS_WINDOWS[rpsWindowIdx][0];
+  drawAppRpsChart(canvas, series, win, nowMs);
+}
+
+function drawAppRpsChart(
+  canvas: HTMLCanvasElement,
+  series: { app: string; color: string; pts: { t: number; v: number }[] }[],
+  windowSec: number,
+  nowMs: number,
+) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 600;
+  const h = canvas.clientHeight || 190;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  const ctx = canvas.getContext("2d")!;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const ml = 46,
+    mr = 10,
+    mt = 8,
+    mb = 20;
+  const iw = w - ml - mr,
+    ih = h - mt - mb;
+  const t1 = nowMs / 1000,
+    t0 = t1 - windowSec;
+  let vmax = 1e-9;
+  for (const s of series) for (const p of s.pts) if (p.v > vmax) vmax = p.v;
+  vmax = Math.max(vmax * 1.08, 1); // shared scale: one y-axis for every app
+  const grid = getCss("--outline-variant");
+  const txt = getCss("--on-surface-variant");
+  ctx.font = "10px system-ui, sans-serif";
+  // horizontal grid + y labels
+  const divs = 4;
+  for (let i = 0; i <= divs; i++) {
+    const y = mt + ih - (i / divs) * ih;
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(ml, Math.round(y) + 0.5);
+    ctx.lineTo(ml + iw, Math.round(y) + 0.5);
+    ctx.stroke();
+    ctx.fillStyle = txt;
+    ctx.textAlign = "right";
+    ctx.fillText(fmtNum((vmax * i) / divs, 1), ml - 6, y + 3);
+  }
+  // x labels
+  ctx.textAlign = "center";
+  for (let i = 0; i <= 4; i++) {
+    const frac = i / 4;
+    ctx.fillStyle = txt;
+    ctx.fillText(fmtAxisTime((t0 + frac * windowSec) * 1000, windowSec), ml + frac * iw, h - 6);
+  }
+  // one line per app, all on the shared scale (x = real time — gaps compress)
+  for (const s of series) {
+    if (s.pts.length < 1) continue;
+    ctx.beginPath();
+    let started = false;
+    for (const p of s.pts) {
+      const x = ml + ((p.t - t0) / windowSec) * iw;
+      const y = mt + ih - (Math.min(p.v, vmax) / vmax) * ih;
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 1.6;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  }
+}
+
+/* window-selector popover under the chart (weight-pop pattern) */
+let winPopEl: HTMLElement | null = null;
+let winPopDoc = false;
+
+function closeWinPop() {
+  winPopEl?.remove();
+  winPopEl = null;
+  if (winPopDoc) {
+    document.removeEventListener("mousedown", winPopDocHandler);
+    winPopDoc = false;
+  }
+}
+function winPopDocHandler(ev: MouseEvent) {
+  if (winPopEl && !winPopEl.contains(ev.target as Node)) closeWinPop();
+}
+
+function openWinPop(btn: HTMLElement) {
+  closeWinPop();
+  const pop = el("div", { class: "win-pop" });
+  const row = el("div", { class: "wp-row" });
+  const val = el("span", { class: "wp-val" }, [RPS_WINDOWS[rpsWindowIdx][0]]);
+  row.append(el("span", { class: "wp-title" }, ["time window"]), val);
+  const slider = el("input", {
+    type: "range",
+    min: "0",
+    max: String(RPS_WINDOWS.length - 1),
+    step: "1",
+    value: String(rpsWindowIdx),
+  }) as HTMLInputElement;
+  slider.addEventListener("input", () => {
+    rpsWindowIdx = parseInt(slider.value, 10);
+    val.textContent = RPS_WINDOWS[rpsWindowIdx][0];
+    btn.textContent = RPS_WINDOWS[rpsWindowIdx][0];
+    localStorage.setItem(RPS_WINDOW_LS, String(rpsWindowIdx));
+    if (lastMetrics) updateRpsChart(lastMetrics);
+  });
+  pop.append(row, slider);
+  pop.append(
+    el("div", { class: "wp-hint" }, [
+      "1 minute → 1 year · history is sampled while the dashboard is open",
+    ]),
+  );
+  pop.addEventListener("mousedown", (e) => e.stopPropagation());
+  (btn.parentElement as HTMLElement).appendChild(pop);
+  winPopEl = pop;
+  document.addEventListener("mousedown", winPopDocHandler);
+  winPopDoc = true;
+  slider.focus();
 }
 
 function getCss(v: string): string {
@@ -913,15 +1274,16 @@ function buildAppNode(a: AppNode): HTMLElement {
       ["×1.0"],
     ),
     el("canvas", {
-      class: "sparkline",
+      class: "sparkline tm-spark",
       "data-role": "app-spark",
       width: "70",
       height: "22",
       style: "width:70px;height:22px",
     }),
-    el("span", { "data-role": "app-rps" }),
-    el("span", { "data-role": "app-limit" }),
-    el("span", { class: "muted", "data-role": "app-p50" }),
+    el("span", { class: "tm-rps", "data-role": "app-rps" }),
+    el("span", { class: "tm-limit", "data-role": "app-limit" }),
+    el("span", { class: "muted tm-p50", "data-role": "app-p50" }),
+    el("span", { class: "tm-seen" }), // spacer — aligns name rows' "seen" column
   ]);
   const btn = el("button", {
     class: "btn btn-small btn-outline blockbtn",
@@ -1048,17 +1410,18 @@ function buildNameNode(app: string, n: ClientNode): HTMLElement {
   row.append(caret);
   row.append(el("span", {}, [esc(n.name)]));
   row.append(el("span", { class: "badge", "data-role": "blockbadge" }));
-  const cv = el("canvas", {
-    class: "sparkline",
-    width: "70",
-    height: "22",
-    style: "width:70px;height:22px",
-  });
-  row.append(cv);
   const meta = el("span", { class: "tree-meta" }, [
-    el("span", { "data-role": "name-rps" }),
-    el("span", { "data-role": "name-p50" }),
-    el("span", { class: "muted", "data-role": "name-seen" }),
+    el("span", { class: "tm-weight" }), // spacer — aligns app rows' weight chip
+    el("canvas", {
+      class: "sparkline tm-spark",
+      width: "70",
+      height: "22",
+      style: "width:70px;height:22px",
+    }),
+    el("span", { class: "tm-rps", "data-role": "name-rps" }),
+    el("span", { class: "tm-limit" }), // spacer — aligns app rows' limit column
+    el("span", { class: "tm-p50", "data-role": "name-p50" }),
+    el("span", { class: "muted tm-seen", "data-role": "name-seen" }),
   ]);
   const btn = el("button", {
     class: "btn btn-small btn-outline blockbtn",

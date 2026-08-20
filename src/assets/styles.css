@@ -268,6 +268,20 @@ table.data tr:hover td { background: var(--surface-2); }
 /* overview: extra breathing room between the system charts and app traffic */
 #ov-traffic { margin-top: 22px; }
 
+/* overview: all-apps RPS chart (shared scale) + window selector */
+#ov-rps { margin-top: 22px; }
+#ov-rps canvas { width: 100%; height: 190px; display: block; }
+.rps-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 8px; }
+.rps-legend .rl { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--on-surface-variant); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.rps-legend .rl i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.rps-controls { display: flex; justify-content: center; position: relative; margin-top: 10px; }
+.win-pop {
+  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 40;
+  width: 280px; padding: 10px 12px;
+  background: var(--surface-1); border: 1px solid var(--outline-variant); border-radius: 10px;
+  box-shadow: var(--elevation-2);
+}
+
 /* mini single-line charts */
 .chart-grid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .chart-card {
@@ -294,7 +308,15 @@ table.data tr:hover td { background: var(--surface-2); }
 .tree .tree-row.selected { background: var(--primary-container); }
 .tree .caret { width: 14px; text-align: center; display: inline-block; font-size: 11px; color: var(--on-surface-variant); transform: rotate(90deg); transition: transform .15s var(--ease); }
 .tree .caret.closed { transform: rotate(0deg); }
-.tree .tree-meta { margin-left: auto; display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--on-surface-variant); }
+.tree .tree-meta { margin-left: auto; display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--on-surface-variant); font-variant-numeric: tabular-nums; }
+/* fixed-width meta slots — app rows and name rows align vertically like a table */
+.tree .tree-meta .weight-label, .tree .tree-meta .tm-weight { width: 50px; flex: none; text-align: center; }
+.tree .tree-meta .tm-spark { width: 70px; flex: none; }
+.tree .tree-meta .tm-rps { width: 11ch; flex: none; white-space: nowrap; }
+.tree .tree-meta .tm-limit { width: 10ch; flex: none; white-space: nowrap; }
+.tree .tree-meta .tm-p50 { width: 11ch; flex: none; white-space: nowrap; }
+.tree .tree-meta .tm-seen { width: 9ch; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree .tree-meta .blockbtn { min-width: 70px; }
 
 /* inline permission panels */
 .panel {
