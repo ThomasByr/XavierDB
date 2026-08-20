@@ -107,11 +107,7 @@ async function ensureMatches() {
     const box = $("#logs-box") as HTMLElement;
     let pages = 0;
     while (box.childElementCount < LOG_PAGE && pages < MAX_AUTO_PAGES) {
-      logStatus(
-        pages
-          ? `searching older logs… ${pages * LOG_PAGE}+ lines scanned`
-          : "searching older logs…",
-      );
+      logStatus(pages ? `searching older logs… ${pages * LOG_PAGE}+ lines scanned` : "searching older logs…");
       const r = await fetchOlder();
       if (r < 0) break;
       pages++;
