@@ -83,6 +83,52 @@ function renderLogList(scrollBottom = false) {
   box.append(frag);
   if (scrollBottom || atBottom) box.scrollTop = box.scrollHeight;
   else box.scrollTop = st;
+  void ensureMatches();
+}
+
+/// Auto-paging: when the filtered view is empty (or thinner than a page) the
+/// matching lines may simply live further back in the file-backed history
+/// (e.g. DEBUG flooded the newest window). Keep pulling older pages until a
+/// page's worth of rows is visible, history ends, or the scan cap is hit.
+/// Same predicate as renderLogList (logMatches), so composed filters (OR
+/// within a category, AND across, + regex) work unchanged.
+const MAX_AUTO_PAGES = 40;
+let logEnsureRunning = false;
+
+function logStatus(msg: string) {
+  const s = $("#logs-status");
+  if (s) s.textContent = msg;
+}
+
+async function ensureMatches() {
+  if (logEnsureRunning || logBusy || !$("#logs-box")) return;
+  logEnsureRunning = true;
+  try {
+    const box = $("#logs-box") as HTMLElement;
+    let pages = 0;
+    while (box.childElementCount < LOG_PAGE && pages < MAX_AUTO_PAGES) {
+      logStatus(
+        pages
+          ? `searching older logs… ${pages * LOG_PAGE}+ lines scanned`
+          : "searching older logs…",
+      );
+      const r = await fetchOlder();
+      if (r < 0) break;
+      pages++;
+      if (logNoMore) break;
+    }
+    const exhausted = logNoMore || logOldestSeq <= 0;
+    if (logTotal === 0) logStatus("no logs yet");
+    else if (box.childElementCount === 0)
+      logStatus(
+        exhausted
+          ? "no lines match the current filters"
+          : `no matches in the last ${pages * LOG_PAGE} loaded lines — refine the filters (older lines live in the rotated log files)`,
+      );
+    else logStatus("");
+  } finally {
+    logEnsureRunning = false;
+  }
 }
 
 function renderLogBadges() {
@@ -199,6 +245,61 @@ function logsFetch(before?: number): Promise<any> {
   return api("/logs?" + q.toString());
 }
 
+/// Load one older page and prepend its MATCHING rows. Returns the number of
+/// rows added (0 = nothing added), or -1 when it could not run (busy,
+/// exhausted, nothing loaded).
+async function fetchOlder(): Promise<number> {
+  if (logBusy || logNoMore || logOldestSeq <= 0) return -1;
+  logBusy = true;
+  const before = logOldestSeq;
+  const box = $("#logs-box") as HTMLElement;
+  const h0 = box.scrollHeight;
+  let added = 0;
+  try {
+    const d = await logsFetch(before);
+    logTotal = d.total;
+    if (d.lines.length === 0) {
+      logNoMore = true;
+      return 0;
+    }
+    logApps = d.apps;
+    logNames = d.names;
+    logLoggers = d.loggers;
+    renderLogSugg();
+    const seen = new Set(logLoaded.map((e: any) => e.seq));
+    const fresh = d.lines.filter((e: any) => !seen.has(e.seq));
+    if (fresh.length === 0) {
+      logNoMore = true; // no progress possible (all duplicates) — stop paging
+      return 0;
+    }
+    logLoaded = fresh.concat(logLoaded);
+    logOldestSeq = logLoaded[0].seq;
+    let re: RegExp | null = null;
+    if (logFilters.regex) {
+      try {
+        re = new RegExp(logFilters.regex);
+      } catch {
+        re = null;
+      }
+    }
+    const frag = document.createDocumentFragment();
+    for (const e of fresh) {
+      if (logMatches(e, re)) {
+        frag.append(logRow(e));
+        added++;
+      }
+    }
+    box.insertBefore(frag, box.firstChild);
+    box.scrollTop += box.scrollHeight - h0;
+    return added;
+  } catch (e: any) {
+    snack(e.message);
+    return -1;
+  } finally {
+    logBusy = false;
+  }
+}
+
 export async function renderLogs() {
   const v = $("#view");
   v.innerHTML = "";
@@ -273,6 +374,11 @@ export async function renderLogs() {
           ),
         ]),
       ]),
+      el("div", {
+        id: "logs-status",
+        class: "muted",
+        style: "padding:4px 14px 0",
+      }),
       el("div", { class: "logs-box", id: "logs-box" }),
     ]),
   );
@@ -299,48 +405,8 @@ export async function renderLogs() {
       snack(e.message);
     }
   };
-  const fetchOlder = async () => {
-    if (logBusy || logNoMore || logOldestSeq <= 0) return;
-    logBusy = true;
-    const before = logOldestSeq;
-    const h0 = box.scrollHeight;
-    try {
-      const d = await logsFetch(before);
-      logTotal = d.total;
-      if (d.lines.length === 0) {
-        logNoMore = true;
-        return;
-      }
-      logApps = d.apps;
-      logNames = d.names;
-      logLoggers = d.loggers;
-      renderLogSugg();
-      const seen = new Set(logLoaded.map((e: any) => e.seq));
-      const fresh = d.lines.filter((e: any) => !seen.has(e.seq));
-      logLoaded = fresh.concat(logLoaded);
-      logOldestSeq = logLoaded[0].seq;
-      let re: RegExp | null = null;
-      if (logFilters.regex) {
-        try {
-          re = new RegExp(logFilters.regex);
-        } catch {
-          re = null;
-        }
-      }
-      const frag = document.createDocumentFragment();
-      for (const e of fresh) {
-        if (logMatches(e, re)) frag.append(logRow(e));
-      }
-      box.insertBefore(frag, box.firstChild);
-      box.scrollTop += box.scrollHeight - h0;
-    } catch (e: any) {
-      snack(e.message);
-    } finally {
-      logBusy = false;
-    }
-  };
   box.addEventListener("scroll", () => {
-    if (box.scrollTop < 40) fetchOlder();
+    if (box.scrollTop < 40) void fetchOlder();
   });
   $("#logs-refresh").onclick = load;
   $("#logs-export").onclick = async () => {
