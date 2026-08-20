@@ -79,17 +79,13 @@ class RpsArchive {
      rates) to avoid a cycle with state.ts — RpsArchive has no runtime
      dependency on Metrics. name_id series are stored under the same map
      with the server's "name:<id>@<app>" key convention. */
-  sample(
-    apps: { app: string; rps: number; names?: { name: string; rps: number }[] }[],
-    nowMs: number,
-  ) {
+  sample(apps: { app: string; rps: number; names?: { name: string; rps: number }[] }[], nowMs: number) {
     const tSec = Math.floor(nowMs / 1000);
     if (!this.firstT) this.firstT = tSec;
     this.dirty = true;
     for (const a of apps) {
       this.pushSample(a.app, Math.max(0, a.rps), tSec);
-      for (const n of a.names ?? [])
-        this.pushSample(`name:${n.name}@${a.app}`, Math.max(0, n.rps), tSec);
+      for (const n of a.names ?? []) this.pushSample(`name:${n.name}@${a.app}`, Math.max(0, n.rps), tSec);
     }
     if (Date.now() - this.lastSaveMs > 30000) this.save();
   }

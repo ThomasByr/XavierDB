@@ -97,7 +97,11 @@ export function renderOverview() {
         el("div", { id: "ov-rps-legend", class: "rps-legend" }),
         el(
           "button",
-          { id: "ov-rps-details", class: "btn btn-outline btn-small", title: "stacked per-name_id breakdown" },
+          {
+            id: "ov-rps-details",
+            class: "btn btn-outline btn-small",
+            title: "stacked per-name_id breakdown",
+          },
           ["Show details"],
         ),
       ]),
@@ -492,8 +496,7 @@ function drawAppRpsChart(
         k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       }
       if (i > 0) {
-        for (let k = st.times.length - 1; k >= 0; k--)
-          ctx.lineTo(xPix(st.times[k]), yPix(st.cum[i - 1][k]));
+        for (let k = st.times.length - 1; k >= 0; k--) ctx.lineTo(xPix(st.times[k]), yPix(st.cum[i - 1][k]));
       } else {
         ctx.lineTo(xPix(st.times[st.times.length - 1]), mt + ih);
         ctx.lineTo(xPix(st.times[0]), mt + ih);
