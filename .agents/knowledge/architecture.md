@@ -467,8 +467,16 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   category, AND across; badges per category (`.f-group` + `.f-chip`);
   popover add-flow with typeahead + suggestion chips; name picker from
   (app,name) facets. Paging: `LOG_PAGE = 300`; scroll near top (40px) →
-  `?limit=300&before=<oldest loaded seq>`; `logNoMore` stop. Download =
-  `/logs` no params → raws → blob.
+  `?limit=300&before=<oldest loaded seq>`; `logNoMore` stop. AUTO-PAGING
+  (`ensureMatches`): after every render, while fewer than LOG_PAGE rows are
+  visible the tab keeps pulling older pages (same `logMatches` predicate —
+  works for any composed filter) up to `MAX_AUTO_PAGES = 40` (12k lines),
+  because matching lines may sit behind a DEBUG-flooded newest window;
+  `#logs-status` (muted line above the box) shows "searching older logs…"
+  progress and the end states ("no lines match…" / scan-cap reached).
+  `fetchOlder` is module-level and returns the count of rows added (-1 =
+  couldn't run; 0 = page empty → `logNoMore`). Download = `/logs` no params →
+  raws → blob.
 - Design system (styles.css): tokens in three blocks — `:root` (light),
   `@media (prefers-color-scheme: dark) :root:not([data-theme="light"])`,
   `:root[data-theme="dark"]` (forced). Primary #6d4aff. `.config-grid` =
