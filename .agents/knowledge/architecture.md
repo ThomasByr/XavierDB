@@ -362,7 +362,8 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
 - Embedded SPA (`include_str!` at compile time, served no-cache under
   `/dashboard/`), hash-routed, 4 pages: `#/overview | #/clients | #/config |
   #/logs`. Permissions/rate-limit pages were removed (2026-08 rework).
-- TS source `src/assets/ts/app.ts` (~2050 lines) → esbuild → `src/assets/app.js`
+- TS source `src/assets/ts/*.ts` (11 modules, zero deps — see
+  .agents/skills/dashboard-rebuild.md for the file map) → esbuild → `src/assets/app.js`
   (generated, never hand-edit). No JS libs, no external fonts.
 - Full dashboard API surface (all under `/dashboard/api/*`, `xdb_admin`
   session cookie; errors same `{error, code, status}` shape): login/logout/
@@ -385,7 +386,7 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   EVERY rebuild, the embed is compile-time), stubs fetch/matchMedia, and
   simulates clicks. Pattern: see skills/dashboard-rebuild.md.
 
-### Dashboard UI architecture (src/assets/ts/app.ts)
+### Dashboard UI architecture (src/assets/ts/ — one module per tab)
 
 - Topbar: `.mongo-widget` = pill containing `#mongo-btn` (`.mongo-status`:
   `#mongo-dot` + "MongoDB status" text) and `#mongo-refresh` (↻ INSIDE the
@@ -411,7 +412,7 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   AFTER the row is attached — `clientWidth` is 0 before) / rps / p50 / limit
   / status badge; header summary = active count, summed rps, worst p50,
   lifetime `health.app.total_requests`.
-- RPS long-window archive (`RpsArchive`, app.ts): the server keeps only ~120
+- RPS long-window archive (`RpsArchive`, ts/rps-archive.ts): the server keeps only ~120
   ticks (~10 min) of `rps_history`, so the dashboard samples every /metrics
   poll into tiered average buckets (10s/1m/5m/30m/6h/1d resolutions) and
   persists them to localStorage `xdb-rps-archive-v1` (saved ≥ every 30 s +
