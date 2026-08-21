@@ -209,12 +209,12 @@ fn config_post_and_undo() {
     let cookie = dash_cookie();
 
     let (_, snap) = dash_get(&agent, &cookie, "/dashboard/api/config");
-    let orig = snap["config"]["dashboard"]["poll_seconds"]
-        .as_f64()
-        .expect("poll_seconds");
-    let new = if orig == 7.0 { 3.0 } else { 7.0 };
+    let orig = snap["config"]["health"]["cache_ttl_seconds"]
+        .as_u64()
+        .expect("cache_ttl_seconds");
+    let new = if orig == 7 { 3 } else { 7 };
     let mut cfg = snap["config"].clone();
-    cfg["dashboard"]["poll_seconds"] = json!(new);
+    cfg["health"]["cache_ttl_seconds"] = json!(new);
     let (status, body) = dash_post(
         &agent,
         &cookie,
@@ -222,7 +222,7 @@ fn config_post_and_undo() {
         Some(&json!({ "config": cfg })),
     );
     assert_eq!(status, 200, "{body}");
-    assert_eq!(body["config"]["dashboard"]["poll_seconds"], json!(new));
+    assert_eq!(body["config"]["health"]["cache_ttl_seconds"], json!(new));
 
     let (status, body) = dash_post(&agent, &cookie, "/dashboard/api/config/undo", None);
     assert_eq!(status, 200, "{body}");
@@ -230,9 +230,9 @@ fn config_post_and_undo() {
 
     let (_, after) = dash_get(&agent, &cookie, "/dashboard/api/config");
     assert_eq!(
-        after["config"]["dashboard"]["poll_seconds"].as_f64(),
+        after["config"]["health"]["cache_ttl_seconds"].as_u64(),
         Some(orig),
-        "undo restored the original poll_seconds"
+        "undo restored the original cache_ttl_seconds"
     );
 }
 
@@ -422,7 +422,7 @@ fn metrics_shape() {
     assert!(body["system"]["cpu_pct"].is_number());
     assert!(body["system"]["mem_pct"].is_number());
     assert!(body["system"]["uptime_s"].is_number());
-    assert!(body["config"]["poll_seconds"].is_number());
+    assert!(body["config"]["cfg_version"].is_number());
     assert!(body["cursors"]["count"].is_number());
     assert!(body["cursors"]["list"].is_array());
 
