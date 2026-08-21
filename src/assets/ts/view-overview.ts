@@ -1,6 +1,6 @@
 // Overview tab: stat chips, system mini-charts, the all-apps RPS chart
 // (shared scale + selectable time window) and the top-apps traffic table.
-import { $, el, esc, fmtNum, fmtBytes, fmtUptime } from "./core";
+import { $, el, esc, fmtNum, fmtBytes, fmtUptime, fmtRate } from "./core";
 import { sparkline, drawMini, lineColor, getCss, withAlpha } from "./charts";
 import { rpsArchive, RPS_WINDOWS, getRpsWindowIdx, setRpsWindowIdx } from "./rps-archive";
 import { updateMongoStatus } from "./mongo";
@@ -46,16 +46,16 @@ const chartDefs: ChartDef[] = [
     label: "Download",
     color: "--primary",
     raw: (s) => s.net_rx_kbps,
-    fmt: (s) => fmtNum(s.net_rx_kbps, 0),
-    sub: () => "KB/s in",
+    fmt: (s) => fmtRate(s.net_rx_kbps),
+    sub: () => "in",
   },
   {
     key: "tx",
     label: "Upload",
     color: "--secondary",
     raw: (s) => s.net_tx_kbps,
-    fmt: (s) => fmtNum(s.net_tx_kbps, 0),
-    sub: () => "KB/s out",
+    fmt: (s) => fmtRate(s.net_tx_kbps),
+    sub: () => "out",
   },
 ];
 let chartEls: Record<string, { value: HTMLElement; canvas: HTMLCanvasElement; sub: HTMLElement }> = {};
@@ -86,11 +86,28 @@ export function renderOverview() {
   v.append(
     el("div", { class: "card", id: "ov-rps" }, [
       el("h3", {}, [
-        "All apps · RPS",
+        el("span", { id: "ov-rps-title" }, ["All apps · RPS"]),
+        el("span", { class: "rps-mode", id: "ov-rps-mode" }, [
+          el("span", { class: "rm-track" }, [
+            el("span", { class: "rm-thumb" }),
+            el("button", { class: "rm-opt", id: "ov-rps-mode-global", type: "button" }, ["Global"]),
+            el("button", { class: "rm-opt", id: "ov-rps-mode-focus", type: "button" }, ["Focus"]),
+          ]),
+          el(
+            "button",
+            {
+              class: "rm-arrow",
+              id: "ov-rps-mode-arrow",
+              type: "button",
+              title: "choose the app plotted in Focus mode",
+            },
+            ["▾"],
+          ),
+        ]),
         el("span", {
           class: "muted",
           id: "ov-rps-summary",
-          style: "margin-left:auto;font-weight:400",
+          style: "font-weight:400",
         }),
       ]),
       el("div", { class: "rps-head" }, [
@@ -116,7 +133,17 @@ export function renderOverview() {
     ]),
   );
   $("#ov-rps-win").onclick = () => openWinPop($("#ov-rps-win"));
-  $("#ov-rps-details").onclick = () => openDetailsPop($("#ov-rps-details"));
+  $("#ov-rps-details").onclick = () => {
+    if (rpsMode !== "focus") openDetailsPop($("#ov-rps-details"));
+  };
+  $("#ov-rps-mode-global").onclick = () => switchRpsMode("global");
+  $("#ov-rps-mode-focus").onclick = () => {
+    // already in Focus with nothing selected: re-open the picker
+    if (rpsMode === "focus" && !focusApp) toggleFocusPop();
+    else switchRpsMode("focus");
+  };
+  $("#ov-rps-mode-arrow").onclick = () => toggleFocusPop();
+  applyRpsModeUI();
   const rpsCanvas = $("#ov-rps-canvas") as HTMLCanvasElement;
   rpsCanvas.addEventListener("mousemove", onRpsHover);
   rpsCanvas.addEventListener("mouseleave", () => setRpsHover(null));
@@ -344,6 +371,80 @@ function saveDetailApps() {
   localStorage.setItem(RPS_DETAILS_LS, JSON.stringify([...detailApps]));
 }
 
+/* chart mode (persisted, per-client): "global" = one line per app (the
+   classic view), "focus" = one line per name_id of a single app picked
+   with the ▾ selector next to the Focus option */
+type RpsMode = "global" | "focus";
+const RPS_MODE_LS = "xdb-rps-mode";
+let rpsMode: RpsMode = (() => {
+  try {
+    return localStorage.getItem(RPS_MODE_LS) === "focus" ? "focus" : "global";
+  } catch {
+    return "global";
+  }
+})();
+function setRpsMode(m: RpsMode) {
+  rpsMode = m;
+  localStorage.setItem(RPS_MODE_LS, m);
+}
+
+/* the app whose name_id series are plotted in Focus mode (persisted) */
+const RPS_FOCUS_LS = "xdb-rps-focus";
+let focusApp: string | null = (() => {
+  try {
+    return localStorage.getItem(RPS_FOCUS_LS) || null;
+  } catch {
+    return null;
+  }
+})();
+function setFocusApp(app: string) {
+  focusApp = app;
+  localStorage.setItem(RPS_FOCUS_LS, app);
+}
+
+/* mirror the mode into the segmented control, the card title and the
+   "Show details" button (stacked breakdown is a Global-mode feature —
+   Focus already plots one line per name_id) */
+function applyRpsModeUI() {
+  const modeEl = $("#ov-rps-mode");
+  if (modeEl) modeEl.setAttribute("data-mode", rpsMode);
+  const globalBtn = $("#ov-rps-mode-global");
+  if (globalBtn) globalBtn.classList.toggle("on", rpsMode === "global");
+  const focusBtn = $("#ov-rps-mode-focus");
+  if (focusBtn) focusBtn.classList.toggle("on", rpsMode === "focus");
+  const title = $("#ov-rps-title");
+  if (title) {
+    if (rpsMode === "focus" && focusApp) {
+      title.textContent = `${focusApp} · RPS`;
+      title.setAttribute("title", focusApp);
+    } else {
+      title.textContent = "All apps · RPS";
+      title.removeAttribute("title");
+    }
+  }
+  const dbtn = $("#ov-rps-details");
+  if (dbtn) {
+    if (rpsMode === "focus") {
+      dbtn.setAttribute("disabled", "");
+      dbtn.setAttribute("title", "Focus mode already plots every name_id — switch to Global first");
+    } else {
+      dbtn.removeAttribute("disabled");
+      dbtn.setAttribute("title", "stacked per-name_id breakdown");
+    }
+  }
+}
+
+function switchRpsMode(m: RpsMode) {
+  if (rpsMode === m) return;
+  closeWinPop();
+  closeDetailsPop();
+  closeFocusPop();
+  setRpsMode(m);
+  applyRpsModeUI();
+  if (m === "focus" && !focusApp) openFocusPop(); // nothing saved yet: guide the pick
+  if (lastMetrics) updateRpsChart(lastMetrics);
+}
+
 /* contribution threshold (% of an app's window-average rps): name_ids
    under it merge into one hatched "others" band. Default 33 → at most 3
    individual bands. 0 = show every band. Persisted. */
@@ -428,22 +529,44 @@ function updateRpsChart(m: Metrics) {
   if (!canvas) return;
   const nowMs = Date.now();
   const [, win] = RPS_WINDOWS[getRpsWindowIdx()];
-  const apps = m.apps.map((a) => a.app).sort();
   const nowSec = Math.floor(nowMs / 1000);
-  const data = rpsArchive.window(apps, win, nowSec);
-  const series = apps.map((app) => ({ app, color: lineColor(app), pts: data.get(app) ?? [] }));
-  const stacks = buildNameStacks(m, apps, win, nowSec);
+  // Global: one series per app (+ optional stacked name_id breakdowns).
+  // Focus: one series per name_id of the selected app — same archive, same
+  // window, same shared scale, just keyed on "name:<id>@<app>".
+  const series: RpsSeries[] = [];
+  let stacks: NameStack[] = [];
+  const cur = new Map<string, number>();
+  if (rpsMode === "focus") {
+    const node = m.apps.find((x) => x.app === focusApp);
+    const names = (node?.names ?? []).map((n) => n.name).sort();
+    const data = rpsArchive.window(
+      names.map((n) => `name:${n}@${focusApp}`),
+      win,
+      nowSec,
+    );
+    for (const n of names) {
+      series.push({ app: n, color: lineColor(n), pts: data.get(`name:${n}@${focusApp}`) ?? [] });
+      cur.set(n, node?.names.find((x) => x.name === n)?.rps ?? 0);
+    }
+  } else {
+    const apps = m.apps.map((a) => a.app).sort();
+    const data = rpsArchive.window(apps, win, nowSec);
+    for (const app of apps) {
+      series.push({ app, color: lineColor(app), pts: data.get(app) ?? [] });
+      cur.set(app, m.apps.find((x) => x.app === app)?.rps ?? 0);
+    }
+    stacks = buildNameStacks(m, apps, win, nowSec);
+  }
   let peak = 0;
   for (const s of series) for (const p of s.pts) if (p.v > peak) peak = p.v;
   const legend = $("#ov-rps-legend");
   if (legend) {
     legend.textContent = "";
-    const cur = new Map(m.apps.map((a): [string, number] => [a.app, a.rps]));
-    for (const app of apps) {
+    for (const s of series) {
       legend.append(
-        el("span", { class: "rl", title: esc(app) }, [
-          el("i", { style: "background:" + lineColor(app) }),
-          esc(app) + " · " + fmtNum(cur.get(app) ?? 0, 1),
+        el("span", { class: "rl", title: esc(s.app) }, [
+          el("i", { style: "background:" + s.color }),
+          esc(s.app) + " · " + fmtNum(cur.get(s.app) ?? 0, 1),
         ]),
       );
     }
@@ -452,9 +575,16 @@ function updateRpsChart(m: Metrics) {
   if (summary) {
     const sinceMs = rpsArchive.startSec * 1000;
     const partial = sinceMs > 0 && sinceMs > nowMs - win * 1000;
-    summary.textContent =
-      `${apps.length} app(s) · shared scale · peak ${fmtNum(peak, 1)} rps` +
-      (partial ? ` · collecting since ${fmtAxisTime(sinceMs, win)}` : "");
+    let text: string;
+    if (rpsMode === "focus" && !series.length) {
+      text = focusApp ? `${focusApp} — no name_id series yet` : "no app selected — pick one with the ▾ arrow";
+    } else {
+      const unit = rpsMode === "focus" ? "name_id(s)" : "app(s)";
+      text =
+        `${series.length} ${unit} · shared scale · peak ${fmtNum(peak, 1)} rps` +
+        (partial ? ` · collecting since ${fmtAxisTime(sinceMs, win)}` : "");
+    }
+    summary.textContent = text;
   }
   const btn = $("#ov-rps-win");
   if (btn) btn.textContent = RPS_WINDOWS[getRpsWindowIdx()][0];
@@ -820,6 +950,7 @@ function winPopDocHandler(ev: MouseEvent) {
 function openWinPop(btn: HTMLElement) {
   closeWinPop();
   closeDetailsPop();
+  closeFocusPop();
   const pop = el("div", { class: "win-pop" });
   const row = el("div", { class: "wp-row" });
   const val = el("span", { class: "wp-val" }, [RPS_WINDOWS[getRpsWindowIdx()][0]]);
@@ -872,6 +1003,7 @@ function openDetailsPop(btn: HTMLElement) {
     return;
   }
   closeWinPop();
+  closeFocusPop();
   const pop = el("div", { class: "det-pop" });
   pop.append(el("div", { class: "dp-title" }, ["name_id breakdown"]));
   const list = el("div", { class: "dp-list" });
@@ -932,4 +1064,66 @@ function mApps(m: Metrics): string[] {
   const ids = new Set(m.apps.map((a) => a.app));
   for (const a of detailApps) ids.add(a); // keep selections for apps not live right now
   return [...ids];
+}
+
+/* Focus-mode app picker (single-select, drops under the ▾ arrow) — the
+   det-pop look, but rows select ONE app instead of toggling a set */
+let focPopEl: HTMLElement | null = null;
+let focPopDoc = false;
+
+function closeFocusPop() {
+  focPopEl?.remove();
+  focPopEl = null;
+  if (focPopDoc) {
+    document.removeEventListener("mousedown", focPopDocHandler);
+    focPopDoc = false;
+  }
+}
+function focPopDocHandler(ev: MouseEvent) {
+  if (focPopEl && !focPopEl.contains(ev.target as Node)) closeFocusPop();
+}
+
+function toggleFocusPop() {
+  if (focPopEl) closeFocusPop();
+  else openFocusPop();
+}
+
+function openFocusPop() {
+  closeFocusPop();
+  closeWinPop();
+  closeDetailsPop();
+  const pop = el("div", { class: "focus-pop" });
+  pop.append(el("div", { class: "dp-title" }, ["focus app"]));
+  const list = el("div", { class: "dp-list" });
+  const apps = pickerApps();
+  if (!apps.length)
+    list.append(el("div", { class: "wp-hint" }, ["no apps yet — they appear once they send requests"]));
+  for (const app of apps) {
+    const row = el("div", { class: "fp-row" + (app === focusApp ? " sel" : ""), title: esc(app) });
+    row.append(el("span", { class: "dp-sw", style: "background:" + lineColor(app) }));
+    row.append(el("span", { class: "dp-name" }, [esc(app)]));
+    if (app === focusApp) row.append(el("span", { class: "fp-check" }, ["✓"]));
+    row.addEventListener("click", () => {
+      setFocusApp(app);
+      closeFocusPop();
+      applyRpsModeUI();
+      if (lastMetrics) updateRpsChart(lastMetrics);
+    });
+    list.append(row);
+  }
+  pop.append(list);
+  pop.append(el("div", { class: "wp-hint" }, ["one app at a time · Focus plots each of its name_id series"]));
+  pop.addEventListener("mousedown", (e) => e.stopPropagation());
+  ($("#ov-rps-mode") as HTMLElement | null)?.appendChild(pop);
+  focPopEl = pop;
+  document.addEventListener("mousedown", focPopDocHandler);
+  focPopDoc = true;
+}
+
+/* apps offered in the picker: live ones plus a saved selection that is
+   not currently live (so it stays visible & re-selectable) */
+function pickerApps(): string[] {
+  const ids = new Set(lastMetrics ? lastMetrics.apps.map((a) => a.app) : []);
+  if (focusApp) ids.add(focusApp);
+  return [...ids].sort();
 }
