@@ -165,12 +165,35 @@ body {
 .btn-small { padding: 6px 14px; font-size: 13px; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 
-.icon-btn {
-  width: 40px; height: 40px; border-radius: 50%; border: none; cursor: pointer;
-  background: transparent; color: var(--on-surface); font-size: 18px;
+.topbar-toggle {
+  display: flex; align-items: center; gap: 8px;
+  background: transparent; color: var(--on-surface);
+  border: none; font-family: inherit; font-size: 13px; font-weight: 500;
+  padding: 7px 14px; border-radius: 999px; cursor: pointer; white-space: nowrap;
   transition: background .15s var(--ease);
 }
-.icon-btn:hover { background: var(--surface-2); }
+.topbar-toggle:hover { background: var(--surface-2); }
+.topbar-toggle .ic { display: inline-flex; }
+#theme-btn .ic-moon { display: none; }
+#theme-btn[data-dark] .ic-moon { display: inline-flex; }
+#theme-btn[data-dark] .ic-sun { display: none; }
+
+/* settings popover (graph smoothing + poll interval — per-browser prefs) */
+.settings-pop {
+  position: absolute; top: 70px; right: 16px; z-index: 40;
+  width: 280px; padding: 14px 16px 12px;
+  background: var(--surface-1); border: 1px solid var(--outline-variant);
+  border-radius: 12px; box-shadow: var(--elevation-3);
+}
+.settings-pop h3 { font-size: 14px; font-weight: 500; margin: 0 0 12px; }
+.sp-row { margin-bottom: 12px; }
+.sp-top {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 13px; margin-bottom: 6px;
+}
+.sp-top label { color: var(--on-surface); }
+.sp-val { color: var(--on-surface-variant); font-variant-numeric: tabular-nums; }
+.sp-hint { font-size: 11px; color: var(--on-surface-variant); margin: 2px 0 0; }
 
 .mongo-widget {
   display: flex; align-items: center;

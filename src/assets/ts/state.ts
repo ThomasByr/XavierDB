@@ -10,8 +10,6 @@ import { renderClients, renderClientsData } from "./view-clients";
 import { renderConfig } from "./view-config";
 import { renderLogs } from "./view-logs";
 
-let pollSeconds = 2;
-
 export async function api(path: string, opts: RequestInit = {}): Promise<any> {
   const res = await fetch("/dashboard/api" + path, {
     headers: { "Content-Type": "application/json" },
@@ -45,6 +43,25 @@ class Smoother {
     return acc;
   }
 }
+/* client-side preferences, persisted in localStorage (per browser):
+   graph smoothing window (samples) + metrics poll interval (seconds). */
+export function getSmoothingWindow(): number {
+  const v = parseInt(localStorage.getItem("xdb-smoothing") || "", 10);
+  return Number.isInteger(v) && v >= 1 && v <= 60 ? v : 5;
+}
+export function setSmoothingWindow(v: number) {
+  localStorage.setItem("xdb-smoothing", String(v));
+  reseedSmoothers();
+}
+export function getPollInterval(): number {
+  const v = parseFloat(localStorage.getItem("xdb-poll") || "");
+  return isFinite(v) && v >= 0.1 && v <= 60 ? v : 2;
+}
+export function setPollInterval(v: number) {
+  localStorage.setItem("xdb-poll", String(v));
+  restartPolling();
+}
+
 /* ============================= state ============================= */
 
 export interface ClientNode {
@@ -71,9 +88,6 @@ export interface AppNode {
 export interface Metrics {
   ts: number;
   config: {
-    poll_seconds: number;
-    theme: string;
-    graph_smoothing: number;
     cfg_version: number;
     perms_version: number;
     health_ttl_seconds: number;
@@ -108,11 +122,13 @@ export let systemHistory: Record<string, number[]> = {
   tx: [],
 };
 
-export function seedSmoothers(m: Metrics) {
-  const win = m.config.graph_smoothing || 5;
-  if (Object.keys(systemSeries).length === 0) {
-    for (const k of Object.keys(systemHistory)) systemSeries[k] = new Smoother(win);
-  }
+export function seedSmoothers() {
+  if (Object.keys(systemSeries).length === 0) reseedSmoothers();
+}
+function reseedSmoothers() {
+  const win = getSmoothingWindow();
+  for (const k of Object.keys(systemSeries)) delete systemSeries[k];
+  for (const k of Object.keys(systemHistory)) systemSeries[k] = new Smoother(win);
 }
 
 export function showLogin() {
@@ -197,7 +213,7 @@ export function stopPolling() {
 export function restartPolling() {
   clearInterval(pollTimer);
   if (pollEnabled) {
-    pollTimer = window.setInterval(poll, Math.max(0.1, pollSeconds) * 1000);
+    pollTimer = window.setInterval(poll, Math.max(0.1, getPollInterval()) * 1000);
     poll();
   }
 }
@@ -207,8 +223,7 @@ export async function poll() {
   try {
     const m: Metrics = await api("/metrics");
     lastMetrics = m;
-    pollSeconds = m.config.poll_seconds || 2;
-    seedSmoothers(m);
+    seedSmoothers();
     rpsArchive.sample(m.apps, Date.now());
     if (currentRoute === "overview") renderOverviewData(m);
     if (currentRoute === "clients") renderClientsData(m);

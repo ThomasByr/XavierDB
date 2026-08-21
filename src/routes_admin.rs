@@ -160,14 +160,11 @@ pub async fn metrics(
     require_admin(&state, &headers)?;
 
     let sys = state.sys.read().unwrap().clone();
-    let (cfg_version, perms_version, poll_seconds, theme, smoothing, health_ttl, multiplier) = {
+    let (cfg_version, perms_version, health_ttl, multiplier) = {
         let c = state.config.read().unwrap();
         (
             state.cfg_version.load(Ordering::Relaxed),
             state.perms_version.load(Ordering::Relaxed),
-            c.dashboard.poll_seconds,
-            c.dashboard.theme.clone(),
-            c.dashboard.graph_smoothing,
             c.health.cache_ttl_seconds,
             c.rate_limit.multiplier,
         )
@@ -292,9 +289,6 @@ pub async fn metrics(
     Ok(Json(json!({
         "ts": now_ms(),
         "config": {
-            "poll_seconds": poll_seconds,
-            "theme": theme,
-            "graph_smoothing": smoothing,
             "cfg_version": cfg_version,
             "perms_version": perms_version,
             "health_ttl_seconds": health_ttl,
@@ -805,21 +799,14 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_theme_and_ranges() {
+    fn sanitize_ranges() {
         let mut c = cfg();
-        c.dashboard.theme = "neon".into();
-        c.dashboard.poll_seconds = 0.05;
         c.dashboard.log_level = "verbose".into();
         c.health.cache_ttl_seconds = 999_999;
         c.auth.session_ttl_hours = 0;
         sanitize_config(&mut c);
-        assert_eq!(c.dashboard.theme, "system");
-        assert_eq!(c.dashboard.poll_seconds, 0.1);
         assert_eq!(c.dashboard.log_level, "info");
         assert_eq!(c.health.cache_ttl_seconds, 3600);
         assert_eq!(c.auth.session_ttl_hours, 1);
-        c.dashboard.poll_seconds = 9999.0;
-        sanitize_config(&mut c);
-        assert_eq!(c.dashboard.poll_seconds, 3600.0);
     }
 }

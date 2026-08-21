@@ -61,15 +61,9 @@ pub struct HealthCfg {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DashboardCfg {
-    /// How often the browser polls metrics, in seconds (fractional allowed).
-    pub poll_seconds: f64,
-    /// Number of samples used for client-side graph smoothing.
-    pub graph_smoothing: u32,
     /// "info" | "debug" — verbosity of console + dashboard ring; debug adds
     /// a per-request line (method, path, peer addr, identity) for every /q and /ls call.
     pub log_level: String,
-    /// "system" | "light" | "dark"
-    pub theme: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -139,10 +133,7 @@ impl Default for ConfigFile {
                 cache_ttl_seconds: 5,
             },
             dashboard: DashboardCfg {
-                poll_seconds: 2.0,
-                graph_smoothing: 5,
                 log_level: "info".to_string(),
-                theme: "system".to_string(),
             },
             auth: AuthCfg {
                 max_per_minute_per_ip: 30,
@@ -410,16 +401,8 @@ impl ConfigFile {
             self.rate_limit.pressure_sensitivity.clamp(0.0, 20.0);
         self.rate_limit.latency_sensitivity = self.rate_limit.latency_sensitivity.clamp(0.0, 20.0);
         self.health.cache_ttl_seconds = self.health.cache_ttl_seconds.clamp(1, 3600);
-        // fractional seconds allowed (UI slider 0.1–10); a legacy u64-era
-        // bincode file fails to decode (varint layout shift) and is replaced
-        // by defaults via the backup chain in load_from_disk.
-        self.dashboard.poll_seconds = self.dashboard.poll_seconds.clamp(0.1, 3600.0);
-        self.dashboard.graph_smoothing = self.dashboard.graph_smoothing.clamp(1, 60);
         if !["info", "debug"].contains(&self.dashboard.log_level.as_str()) {
             self.dashboard.log_level = "info".into();
-        }
-        if !["system", "light", "dark"].contains(&self.dashboard.theme.as_str()) {
-            self.dashboard.theme = "system".into();
         }
         self.auth.max_per_minute_per_ip = self.auth.max_per_minute_per_ip.clamp(1, 10_000);
         self.auth.session_ttl_hours = self.auth.session_ttl_hours.clamp(1, 24 * 30);
