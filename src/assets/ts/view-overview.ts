@@ -247,7 +247,7 @@ function renderOvTraffic(m: Metrics) {
     summary.textContent =
       active.length === 0
         ? "no traffic yet"
-        : `${active.length} active · ${fmtNum(sumRps, 1)} rps total · worst p50 ${fmtNum(worstP50, 1)}ms · ${fmtNum(lifetime, 0)} requests lifetime`;
+        : `${active.length} active · ${fmtNum(sumRps, 1)} rps total · worst p50 ${fmtNum(worstP50, 1)}ms · ${fmtNum(lifetime, 0)} requests since server start`;
   }
   body.textContent = "";
   if (top.length === 0) {
