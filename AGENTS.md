@@ -19,12 +19,14 @@ file(s) before starting work, update them after.
    detection + install). Example: `uv run --with pyyaml python -c "import yaml"`.
 2. **Never `git commit`.** The user handles all commits (their GPG signing is
    misconfigured; commits fail anyway). Make changes in the working tree only.
-3. **Docker is optional.** If `docker` and the compose plugin are not on PATH
-   (`command -v docker && docker --version && docker compose version`), run
-   bare metal (`.agents/skills/build-run-test.md`). The compose/Docker setup
-   (`.agents/skills/docker.md`) is VERIFIED on Docker Desktop (2026-08-16)
-   with one known limitation: file-watcher hot reloads don't work in
-   containers on Docker Desktop (inotify over VirtioFS) — see docker.md.
+3. **Docker is ALWAYS preferred over the bare-metal stack** for running,
+   building and deploying. Use bare metal only to test low-level Rust code.
+   If `docker` and the compose plugin are not on PATH
+   (`command -v docker && docker --version && docker compose version`), fall
+   back to bare metal (`.agents/skills/build-run-test.md`). The compose/Docker
+   setup (`.agents/skills/docker.md`) is VERIFIED on Docker Desktop
+   (2026-08-16) with one known limitation: file-watcher hot reloads don't work
+   in containers on Docker Desktop (inotify over VirtioFS) — see docker.md.
 4. **Some OSes refuse to overwrite a running executable** — `cargo build`
    fails until the server is killed (on the dev machine the error is
    "Accès refusé"). Restart ritual (each step a SEPARATE shell command; the
