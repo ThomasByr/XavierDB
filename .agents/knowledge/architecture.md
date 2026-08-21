@@ -446,6 +446,29 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   the group). Hover redraws from cached draw args (`rpsDrawArgs`), no
   re-poll needed. jsdom verification: `threshold-repro.mjs` (see
   skills/dashboard-rebuild.md).
+- RPS chart Focus mode (2026-08-21): the RPS card header carries a
+  Global ⇄ Focus segmented switch (`.rps-mode`, centered between the
+  `#ov-rps-title` span and the summary — two `margin-left:auto` children
+  split the h3 free space), with a sliding thumb (`.rm-thumb`, CSS
+  transform on `[data-mode]`) and a `▾` arrow (`.rm-arrow`, always
+  clickable) that opens the app picker `.focus-pop` (det-pop look,
+  single-select rows: swatch + name + ✓ on the selected one, anchored
+  `position:absolute` centered under the `.rps-mode` wrapper which is the
+  positioning context). Global = one line per app (+ optional stacked
+  breakdown). Focus = one line per name_id of ONE app: same archive
+  (`name:<id>@<app>` keys), same window selector, same shared scale,
+  same hover tooltip (rows = name series), same legend mechanism (swatch
+  + current rps per name, sorted); NO stacked bands (stacks = []). In
+  Focus the card title becomes `<app> · RPS`, the summary counts
+  `name_id(s)` ("no name_id series yet" / "no app selected — pick one
+  with the ▾ arrow" when empty), and the `#ov-rps-details` button is
+  DISABLED (the breakdown is a Global feature; guard in its onclick too —
+  Focus already plots every name_id). Persisted per-client in
+  localStorage: `xdb-rps-mode` ("global"|"focus") and `xdb-rps-focus`
+  (the app id). Switching to Focus with no saved app auto-opens the
+  picker; the picker offers live apps plus a saved-but-not-live
+  selection. jsdom verification: `focus-repro.mjs` (see
+  skills/dashboard-rebuild.md).
 - RPS long-window archive (`RpsArchive`, ts/rps-archive.ts): the server keeps only ~120
   ticks (~10 min) of `rps_history`, so the dashboard samples every /metrics
   poll into tiered average buckets (10s/1m/5m/30m/6h/1d resolutions) and
