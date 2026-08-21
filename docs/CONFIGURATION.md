@@ -66,10 +66,7 @@ checksummed (CRC32) and written atomically.
 | `rate_limit` | `ema_alpha` | 0.2 | smoothing of the request-rate measurement |
 | `rate_limit` | `weights` | — | per-app weight multiplier (0.1–10, snapped to 0.1) — set per app in the dashboard Clients view |
 | `health` | `cache_ttl_seconds` | 5 | /health refresh interval |
-| `dashboard` | `poll_seconds` | 2 | browser polling interval for metrics (fractional seconds ok; dashboard slider 0.1–10, config clamp 0.1–3600) |
-| `dashboard` | `graph_smoothing` | 5 | client-side graph smoothing window |
 | `dashboard` | `log_level` | `info` | console + log-file verbosity: `info` \| `debug` (debug adds one line per `/q`/`/ls` request: method, path, identity) — hot-reloadable |
-| `dashboard` | `theme` | `system` | `system` \| `light` \| `dark` |
 | `auth` | `max_per_minute_per_ip` | 30 | brute-force throttle on `/auth` (the dashboard login has its own throttle — `admin.max_logins_per_ip_per_minute` in `server.yml`) |
 | `auth` | `session_ttl_hours` | 24 | dashboard session lifetime (clamped 1–720) |
 | `blocked` | list | — | blocked `name@app` or bare `app` identifiers |
@@ -101,9 +98,12 @@ are persisted: `min_limit` is clamped to 1–10 000 and `max_limit` to
 Other clamps: `multiplier` 0.05–20, `target_latency_ms` 1–60 000,
 `latency_sensitivity` / `pressure_sensitivity` 0–20, `growth_rate` 1–2,
 `tick_seconds` 1–3600, `ema_alpha` 0.01–0.9, weights 0.1–10,
-`cache_ttl_seconds` 1–3600, `graph_smoothing` 1–60, `poll_seconds` 0.1–3600,
-`jwt_token_lifetime_minutes` 1–43 200; invalid `log_level` / `theme` values
-fall back to `info` / `system`.
+`cache_ttl_seconds` 1–3600, `jwt_token_lifetime_minutes` 1–43 200; invalid
+`log_level` values fall back to `info`.
+
+Dashboard theme, graph smoothing window and metrics poll interval are
+**per-browser** preferences (localStorage), set from the dashboard top bar
+(theme toggle + Settings popover) — they are not part of the server config.
 
 ## `authorized_keys.yml`
 

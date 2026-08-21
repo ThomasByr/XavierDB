@@ -25,11 +25,12 @@ peer address, or `X-Real-IP` / the last `X-Forwarded-For` entry when
 ## Pages
 
 ### Overview
-System metrics polled every `dashboard.poll_seconds` (default 2 s):
-CPU, memory, disk, network (KB/s), plus QPS, MongoDB ping and uptime.
-Graphs are smoothed client-side (`dashboard.graph_smoothing`). Polling
-interval, smoothing window and theme are configurable on the Config page —
-the golden rule: *anything that could need tuning is tunable here*.
+System metrics polled every few seconds (per-browser poll interval, default
+2 s — see the Settings popover in the top bar): CPU, memory, disk, network
+(KB/s), plus QPS, MongoDB ping and uptime. Graphs are smoothed client-side
+(smoothing window also lives in the Settings popover; both are saved in
+localStorage, i.e. per browser). The golden rule for the Config page:
+*anything that could need tuning is tunable here.*
 
 ### Clients
 Tree of `app_id → name_id`, each node showing smoothed requests/second
@@ -78,11 +79,12 @@ rules, a name for its overrides):
   stay active.
 
 ### Config
-All other settings in one form: General (permission file, JWT lifetime,
-`/auth` throttle — the dashboard-login throttle lives in `server.yml` —
-session TTL), **Rate limiting** (target latency, sensitivities, growth,
-min/max, multiplier, tick interval, smoothing α — per-app weights are on
-the Clients page), Health (TTL) and Dashboard (polling, smoothing, theme).
+All other settings in one form, two sections side by side: **General**
+(permission file, JWT lifetime, `/auth` throttle — the dashboard-login
+throttle lives in `server.yml` — session TTL, health TTL, log level) and
+**Rate limiting** (target latency, sensitivities, growth, min/max,
+multiplier, tick interval, smoothing α — per-app weights are on the Clients
+page).
 Features:
 
 - **Undo / Redo** — and the change history list: *click any entry to revert
@@ -162,5 +164,5 @@ Notes:
 | `/health` is `503` | MongoDB unreachable or degraded; the body explains which |
 | JWT stops working after restart | no `auth.jwt_secret` in `server.yml` → set one to keep tokens stable |
 | config file corrupted | the server falls back to `config.bak` automatically |
-| dashboard feels slow | lower `poll_seconds` (Config) — or raise it to save resources |
+| dashboard feels slow | open the top-bar Settings popover and lower the poll interval |
 | permission edits lost their comments | the dashboard rewrites `authorized_keys.yml`; keep comments elsewhere |
