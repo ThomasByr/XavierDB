@@ -32,6 +32,17 @@ export function fmtBytes(mb: number): string {
   return mb.toFixed(0) + " MB";
 }
 
+export function fmtRate(kbps: number): string {
+  const units = ["B", "KB", "MB", "GB"];
+  let v = kbps * 1024;
+  let i = 0;
+  while (v >= 1023.995 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return v.toFixed(2) + " " + units[i] + "/s";
+}
+
 export function timeAgo(ms: number): string {
   if (!ms) return "never";
   const s = Math.max(0, (Date.now() - ms) / 1000);
