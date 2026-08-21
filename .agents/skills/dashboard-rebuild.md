@@ -63,7 +63,11 @@ pins the name_id threshold to 0% via localStorage before eval) and
 `threshold-repro.mjs` (2026-08-20: threshold slider INSIDE the details
 popover — no standalone button; others-band merge/hatch, 0.50→0.10 band
 ramp, 0%/high-threshold extremes, live slider re-render, full hover
-detail).
+detail; check 5a was fixed 2026-08-21 to match the documented 2026-08-20
+behavior — the tooltip lists DRAWN bands only) and `focus-repro.mjs`
+(2026-08-21: Global ⇄ Focus segmented switch in the RPS card header, ▾
+app-picker popover, focus legend/summary/title, Show-details disabled in
+Focus, localStorage persistence + restore).
 Harness copies live in the dev machine's temp dir (see
 `.pi/notes/credentials.md`).
 
