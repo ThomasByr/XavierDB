@@ -315,18 +315,22 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   max_limit ∈ [min_limit, 10 000] (min > max would panic the metrics loop —
   max is raised to min); multiplier ∈ [0.05, 20]; target_latency ∈ [1, 60 000];
   growth ∈ [1, 2]; tick ∈ [1, 3600]; ema ∈ [0.01, 0.9]; sensitivities ∈
-  [0, 20]; health ttl ∈ [1, 3600]; dashboard poll ∈ [0.1, 3600] (f64);
-  smoothing ∈ [1, 60]; log_level ∈ {info, debug}; theme ∈ {system, light,
-  dark}; per-ip ∈ [1, 10 000]; session ttl ∈ [1, 720]; jwt ∈ [1, 43 200].
+  [0, 20]; health ttl ∈ [1, 3600]; log_level ∈ {info, debug};
+  per-ip ∈ [1, 10 000]; session ttl ∈ [1, 720]; jwt ∈ [1, 43 200].
 - Key fields (defaults): global{jwt_token_lifetime_minutes=90,
   permission_file="authorized_keys.yml"}, rate_limit{min=1, max=200,
   multiplier=1.0, target=50, pressure_sens=1.5, latency_sens=1.0, growth=1.15,
-  tick=5, ema=0.2, weights{}}, health{ttl=5}, dashboard{poll=2, smoothing=5,
-  log_level="info", theme="system"}, auth{per_ip=30, session_ttl_h=24}, blocked[], history[],
+  tick=5, ema=0.2, weights{}}, health{ttl=5}, dashboard{log_level="info"},
+  auth{per_ip=30, session_ttl_h=24}, blocked[], history[],
   redo[].
-- `dashboard.poll_seconds` is u64 → f64 (2026-08-14); bincode uses VARINT int
-  encoding → legacy config files fail to decode → defaults (accepted, no
-  migration).
+- 2026-08-21: `dashboard.poll_seconds`, `dashboard.graph_smoothing` and
+  `dashboard.theme` were REMOVED from ConfigFile (theme/smoothing/poll
+  interval are per-browser dashboard prefs in localStorage — see below).
+  Bincode is positional → pre-removal `config` files fail to decode and fall
+  back to defaults (accepted, no migration; old files were rm'd by hand).
+- `dashboard.poll_seconds` was u64 → f64 (2026-08-14); bincode used VARINT int
+  encoding → legacy config files failed to decode → defaults (historical note;
+  field since removed).
 
 ## 7. Health
 
@@ -502,18 +506,29 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   GET /perms → `rebuildOpenPanels()`. Search clears after save (pre-existing).
 - Config tab form: field spec `groups: [name, hint|null, CfgField[]][]`;
   `CfgField{path,label,kind,min?,max?,step?,unit?,prefix?,options?}`; kinds
-  range/text/select. 3 groups (Health merged into Dashboard;
-  `.config-grid` auto-fit): General (permission_file text, JWT lifetime,
-  per-IP auth, session TTL), Rate limiting (multiplier, target p50,
-  sensitivities, growth, min/max docs, tick, ema), Dashboard (poll,
-  smoothing, health TTL, log_level, theme). Save flow: `#cfg-save` onclick →
+  range/text/select. 2 groups side by side
+  (`.config-grid` auto-fit): General (permission_file text, JWT lifetime,
+  per-IP auth, session TTL, health TTL, log_level), Rate limiting
+  (multiplier, target p50, sensitivities, growth, min/max docs, tick, ema).
+  Save flow: `#cfg-save` onclick →
   `structuredClone(configData.config)` → collect
   `form.querySelectorAll("input[data-path], select[data-path]")` →
   POST `/config` → re-render + snack. `renderConfigForm` rebuilds ALL sliders
   from `configData.config` on every load/save; dirty state via module-level
   `configDirty` + `markCfgDirty()`; failed save keeps dirty + re-enables
   Save. Dragging a slider back to its original value still counts as dirty
-  (no baseline diff) — accepted. Blocked identifiers card = full-width below
+  (no baseline diff) — accepted. Per-browser display prefs live in
+  localStorage, NOT server config: theme (`localStorage["xdb-theme"]`,
+  default dark; `#theme-btn` in the topbar toggles it — sun/moon icons +
+  Light/Dark label), graph smoothing window (`xdb-smoothing`, default 5,
+  slider 1–20) and metrics poll interval (`xdb-poll`, default 2 s, slider
+  0.1–10). The last two are edited in the `#settings-btn` popover (gear +
+  "Settings" topbar button; `settings-pop` CSS, outside-click closes):
+  smoothing changes re-seed the `Smoother` instances (state.ts
+  `reseedSmoothers`, buffers reset), poll changes call `restartPolling()`
+  immediately. Accessors in state.ts: get/setSmoothingWindow,
+  get/setPollInterval.
+  Blocked identifiers card = full-width below
   the columns.
 - Logs tab: file-backed store (see config-world.md + api.md logs endpoint).
   `.logs-head` h3 + [↻ Refresh] [⬇ Download] top-right; `.logs-filterbar`

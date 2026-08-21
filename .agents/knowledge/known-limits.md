@@ -95,8 +95,8 @@
 - Dashboard UI not yet browser-tested (API contracts verified via curl and
   jsdom repros) — a first browser pass may reveal weight-popover overflow at
   the viewport bottom, legend wrap, slider feel. Other pre-existing cosmetic
-  items: theme sync only on overview route entry; search input resets after a
-  perms widget save. Declined/not implemented: beforeunload dirty guard.
+  items: search input resets after a perms widget save. Declined/not
+  implemented: beforeunload dirty guard.
 - **Docker (verified 2026-08-16, Docker Desktop 29.7.2/WSL2):** full build +
   compose up + healthchecks work; battery vs the docker API is 108/110. The
   app's perms/config/TLS hot reloads are pure inotify and inotify events do

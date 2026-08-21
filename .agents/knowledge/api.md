@@ -38,7 +38,7 @@ validation) map to 400; duplicate keys → 409.
 - `POST /dashboard/api/logout` / `GET /dashboard/api/session` →
   `{"username":"…"}`; sessions are in-memory (restart = re-login).
 - `GET /dashboard/api/metrics` — big poll payload: `{ts, qps, config:
-  {poll_seconds, theme, graph_smoothing, cfg_version, perms_version,
+  {cfg_version, perms_version,
   health_ttl_seconds, multiplier}, system:{cpu_pct, mem_pct, mem_used_mb,
   mem_total_mb, disk_pct, disk_used_mb, disk_total_mb, net_rx_kbps,
   net_tx_kbps, uptime_s, ts_ms}, health,
@@ -47,8 +47,9 @@ validation) map to 400; duplicate keys → 409.
   rps_history, names:[{name, id:"n@app", blocked, rps, p50_ms,
   total_requests, last_seen_ms, rps_history}]}], cursors:{count, list}}`.
   Apps = perms-file apps ∪ live-seen, sorted; zero-stats rows still appear;
-  cursors sorted by last_used_ms DESC, truncated to 30. UI polls every
-  `poll_seconds`; perms drift via `config.perms_version != permsData.version`.
+  cursors sorted by last_used_ms DESC, truncated to 30. UI polls on its own
+  timer (per-browser `localStorage["xdb-poll"]`, default 2 s — Settings
+  popover in the topbar); perms drift via `config.perms_version != permsData.version`.
 - `POST /dashboard/api/block` / `unblock` `{id}` (bare `app` or `name@app`,
   1..=130 chars) → mutates `config.blocked` with history (desc "block {id}",
   path "blocked").
