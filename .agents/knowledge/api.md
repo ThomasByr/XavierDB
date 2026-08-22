@@ -81,6 +81,14 @@ validation) map to 400; duplicate keys → 409.
   emits lands in the files (tracing events, eprintln/println, panics via a
   custom hook). Logs SURVIVE restarts, and `seq` (a global line number seeded
   by a startup scan) stays stable across restarts AND rotations.
+  MEMORY-BOUNDED READ (2026-08-22 fix — paged searches used to make server RSS
+  climb): the sink TRACKS per-file line counts (`cur_lines` + `rotated_lines`,
+  maintained on write/rotate, seeded at startup) so reads never recount the
+  store; files entirely at/after `before` (or after `want` is satisfied) are
+  never OPENED, and each opened file is read once into a single buffer whose
+  lines are walked newest→oldest with iterator adapters — skipped lines cost
+  zero allocations (the old code materialized a `Vec<String>` of EVERY line
+  of EVERY file on EVERY request).
 - `GET /dashboard/api/databases` → `{databases:[{name, collections}],
   unavailable}` — admin-only, unfiltered (client-side equivalent: `/ls`).
 

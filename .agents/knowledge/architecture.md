@@ -554,7 +554,12 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   retains at most `LOG_MAX = LOG_PAGE × (MAX_AUTO_PAGES + 2)` = 12,600 rows
   in `logLoaded` + the DOM. `pruneRetained()` runs at the end of every
   `fetchOlder()` and, once the cap is crossed, drops the OLDEST excess rows
-  (updating `logOldestSeq`/`logNoMore`) and re-renders `renderLogList()`. Old
+  (updating `logOldestSeq`/`logNoMore`) and re-renders `renderLogList()` —
+  and LATCHES `logCapped`, which makes `fetchOlder` refuse further older
+  paging until the next fresh base load (2026-08-22 fix: without it the
+  prune raised `logOldestSeq` so the next fetch re-fetched the just-evicted
+  page, pruned again, re-rendered the 12k-row DOM — a fetch→prune→rerender
+  LIVELOCK that kept churning on every subsequent search/scroll). Old
   pages live in the rotated on-disk files and are re-fetchable, so capping
   the client ring only bounds memory (this was added for an unbounded-RAM
   report: repeated searches used to accumulate every pulled page forever).
