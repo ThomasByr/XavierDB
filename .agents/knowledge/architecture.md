@@ -558,6 +558,17 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   pages live in the rotated on-disk files and are re-fetchable, so capping
   the client ring only bounds memory (this was added for an unbounded-RAM
   report: repeated searches used to accumulate every pulled page forever).
+  MEMORY RELEASE: the router (state.ts) exposes a generic per-view `leaves`
+  hook ({"logs": releaseLogs}) called before the incoming view renders, so
+  leaving the Logs tab drops `logLoaded` + facet lists + `logTotal` (and bumps
+  `logGen`); `logFilters` is deliberately
+  KEPT, so leaving/returning restores the user's active filtered view and
+  re-runs the auto-search. `logGen` (bumped by every fresh base load and by
+  release) is captured by each in-flight `fetchOlder()` and checked after its
+  await, so a stale older page resolved after a clear/leave/reload is
+  discarded instead of spliced onto the freshly cleared ring. Clear-all calls
+  the same `load()` used on tab entry (~ just switched to Logs): newest
+  300 unfiltered.
   Download = `/logs` no params → raws → blob.
 - Design system (styles.css): tokens in three blocks — `:root` (light),
   `@media (prefers-color-scheme: dark) :root:not([data-theme="light"])`,
