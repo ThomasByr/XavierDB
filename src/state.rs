@@ -938,4 +938,51 @@ mod tests {
         assert_eq!(tracked, on_disk, "tracked counts match disk after rotations");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn log_read_tail_windows_large_files() {
+        let dir = std::env::temp_dir().join(format!("xdb-logtail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // 2000 lines × ~100 bytes = ~200 KB: windows must span several of
+        // read_tail's 64 KiB scan chunks in both directions
+        let lines: Vec<String> = (0..2000)
+            .map(|i| format!("{:04} {}", i, "x".repeat(95)))
+            .collect();
+        let p = dir.join(LOG_BASE);
+        std::fs::write(&p, lines.join("\n") + "\n").unwrap();
+        let size = std::fs::metadata(&p).unwrap().len();
+        let want = |skip: u64, take: u64| {
+            read_tail(&p, skip, take, size)
+                .unwrap()
+                .lines()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+        };
+        // newest window
+        assert_eq!(want(0, 3), lines[1997..2000]);
+        // middle window across chunk boundaries
+        assert_eq!(want(500, 300), lines[1200..1500]);
+        // oldest window (o1 clamps to BOF)
+        assert_eq!(want(1997, 3), lines[0..3]);
+        // whole file (take = all)
+        assert_eq!(want(0, 2000).len(), 2000);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn log_read_tail_handles_missing_trailing_newline() {
+        let dir = std::env::temp_dir().join(format!("xdb-lognl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(LOG_BASE);
+        std::fs::write(&p, "aaa\nbbb\nccc").unwrap(); // no trailing newline
+        let size = std::fs::metadata(&p).unwrap().len();
+        // the partial last line still counts as a line
+        assert_eq!(read_tail(&p, 0, 1, size).unwrap(), "ccc");
+        assert_eq!(read_tail(&p, 1, 1, size).unwrap(), "bbb\n");
+        assert_eq!(read_tail(&p, 2, 1, size).unwrap(), "aaa\n");
+        assert_eq!(read_tail(&p, 0, 3, size).unwrap(), "aaa\nbbb\nccc");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
