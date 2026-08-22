@@ -510,5 +510,9 @@ export async function renderLogs() {
     renderLogSugg();
     setHint();
   };
+  // Re-render the active filter chips after the DOM rebuild on each tab
+  // entry: logFilters persists across route switches, so the previously set
+  // badges must be painted back into the freshly-built #logs-fbadges.
+  renderLogBadges();
   load();
 }
