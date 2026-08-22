@@ -550,8 +550,15 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   `#logs-status` (muted line above the box) shows "searching older logs…"
   progress and the end states ("no lines match…" / scan-cap reached).
   `fetchOlder` is module-level and returns the count of rows added (-1 =
-  couldn't run; 0 = page empty → `logNoMore`). Download = `/logs` no params →
-  raws → blob.
+  couldn't run; 0 = page empty → `logNoMore`). MEMORY BOUND: the client
+  retains at most `LOG_MAX = LOG_PAGE × (MAX_AUTO_PAGES + 2)` = 12,600 rows
+  in `logLoaded` + the DOM. `pruneRetained()` runs at the end of every
+  `fetchOlder()` and, once the cap is crossed, drops the OLDEST excess rows
+  (updating `logOldestSeq`/`logNoMore`) and re-renders `renderLogList()`. Old
+  pages live in the rotated on-disk files and are re-fetchable, so capping
+  the client ring only bounds memory (this was added for an unbounded-RAM
+  report: repeated searches used to accumulate every pulled page forever).
+  Download = `/logs` no params → raws → blob.
 - Design system (styles.css): tokens in three blocks — `:root` (light),
   `@media (prefers-color-scheme: dark) :root:not([data-theme="light"])`,
   `:root[data-theme="dark"]` (forced). Primary #6d4aff. `.config-grid` =
