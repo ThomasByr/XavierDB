@@ -15,6 +15,12 @@ let logLoaded: any[] = []; // ring entries, oldest -> newest (all loaded pages)
 let logTotal = 0;
 let logOldestSeq = 0; // seq of the oldest loaded entry (0 = nothing loaded)
 let logNoMore = false;
+// Set once the client ring hits LOG_MAX and pruneRetained evicts: pages
+// older than the retained window were dropped, so paging further would just
+// re-fetch the evicted pages, evict them again, and re-render forever (a
+// fetch→prune→rerender livelock that kept the tab churning and hammered the
+// server). Cleared by a fresh base load / tab re-entry.
+let logCapped = false;
 let logApps: string[] = [];
 let logNames: { app: string; name: string }[] = [];
 let logLoggers: string[] = [];
@@ -117,6 +123,7 @@ function pruneRetained() {
   const over = logLoaded.length - LOG_MAX;
   if (over <= 0) return;
   logLoaded.splice(0, over);
+  logCapped = true; // retained window is full — stop older-paging until a fresh load
   if (logLoaded.length) {
     logOldestSeq = logLoaded[0].seq;
   } else {
@@ -139,6 +146,7 @@ export function releaseLogs() {
   logTotal = 0;
   logOldestSeq = 0;
   logNoMore = true;
+  logCapped = false;
   logApps = [];
   logNames = [];
   logLoggers = [];
@@ -159,7 +167,7 @@ async function ensureMatches() {
       pages++;
       if (logNoMore) break;
     }
-    const exhausted = logNoMore || logOldestSeq <= 0;
+    const exhausted = logNoMore || logCapped || logOldestSeq <= 0;
     if (logTotal === 0) logStatus("no logs yet");
     else if (box.childElementCount === 0)
       logStatus(
@@ -291,7 +299,7 @@ function logsFetch(before?: number): Promise<any> {
 /// rows added (0 = nothing added), or -1 when it could not run (busy,
 /// exhausted, nothing loaded).
 async function fetchOlder(): Promise<number> {
-  if (logBusy || logNoMore || logOldestSeq <= 0) return -1;
+  if (logBusy || logNoMore || logCapped || logOldestSeq <= 0) return -1;
   logBusy = true;
   const gen = logGen;
   const before = logOldestSeq;
@@ -352,6 +360,7 @@ export async function renderLogs() {
   logTotal = 0;
   logOldestSeq = 0;
   logNoMore = false;
+  logCapped = false;
   logApps = [];
   logNames = [];
   logLoggers = [];
@@ -437,6 +446,7 @@ export async function renderLogs() {
       logTotal = d.total;
       logOldestSeq = d.lines.length ? d.lines[0].seq : 0;
       logNoMore = false;
+      logCapped = false; // fresh base page — the retained window restarts empty
       logApps = d.apps;
       logNames = d.names;
       logLoggers = d.loggers;
