@@ -809,4 +809,66 @@ mod tests {
         assert_eq!(page[0].seq, 5, "last 5 before seq 10");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn log_read_older_walk_reassembles_store() {
+        let dir = std::env::temp_dir().join(format!("xdb-logwalk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = LogFileSink::new(dir.clone(), 3, 240);
+        for i in 0..40 {
+            s.write(&format!(
+                "walk {i:04} pppppppppppppppppppppppppppppppppppppppp"
+            ));
+        }
+        // walk the whole store page by page, exactly like the dashboard's
+        // "searching older logs" auto-pager: newest page, then before=<oldest>
+        let mut seen: Vec<u64> = Vec::new();
+        let mut before: Option<u64> = None;
+        loop {
+            let (page, total, _, _, _) = s.read(7, before);
+            assert_eq!(total, 40);
+            assert!(before.is_none_or(|b| page.iter().all(|e| e.seq < b)));
+            let Some(oldest) = page.first().map(|e| e.seq) else {
+                break;
+            };
+            seen.extend(page.iter().map(|e| e.seq));
+            if oldest == 0 {
+                break;
+            }
+            before = Some(oldest);
+        }
+        seen.sort(); // order-insensitive: every seq must appear exactly once
+        let expect: Vec<u64> = (0..40).collect();
+        assert_eq!(seen, expect, "older-page walk covers every seq exactly once");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn log_sink_tracks_per_file_counts_across_rotations() {
+        let dir = std::env::temp_dir().join(format!("xdb-logcnt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = LogFileSink::new(dir.clone(), 3, 120);
+        for i in 0..40 {
+            s.write(&format!(
+                "line {i:04} pppppppppppppppppppppppppppppppppppppppp"
+            ));
+        }
+        // tracked counts must always match what a fresh scan of disk sees
+        let tracked: u64 = s.rotated_lines.iter().sum::<u64>() + s.cur_lines;
+        assert_eq!(tracked, s.next_seq, "tracked counts sum to next_seq");
+        let on_disk: u64 = (0..=2)
+            .map(|i| {
+                let p = if i == 0 {
+                    dir.join(LOG_BASE)
+                } else {
+                    dir.join(format!("{LOG_BASE}.{i}"))
+                };
+                count_lines(&p)
+            })
+            .sum();
+        assert_eq!(tracked, on_disk, "tracked counts match disk after rotations");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
