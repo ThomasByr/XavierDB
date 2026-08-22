@@ -424,10 +424,11 @@ impl LogFileSink {
         // Walk newest -> oldest, collecting the newest `want` entries below
         // `before`. Memory-bounded: files that cannot contribute are never
         // opened (entirely at/after `before`, or `want` already satisfied),
-        // and each opened file is read once into a single buffer whose lines
-        // are walked backwards with iterator adapters — skipped lines cost
-        // zero allocations (the old code materialized a String per line of
-        // EVERY file on EVERY request).
+        // and each opened file is read as a TAIL WINDOW ONLY (read_tail
+        // locates the byte range by counting newlines backwards in bounded
+        // chunks, then reads just that range) — a paged request holds the
+        // bytes of its ≤ max(limit, LOG_FACET_LINES) lines, never a whole
+        // multi-MB file.
         'walk: for (idx, (p, count)) in files.iter().enumerate().rev() {
             if want == 0 {
                 break;
@@ -439,21 +440,18 @@ impl LogFileSink {
             if before.is_some_and(|b| base_seq >= b) {
                 continue; // whole file lives at/after `before` — skip it
             }
-            let Ok(content) = std::fs::read_to_string(p) else {
-                continue;
-            };
             // tail lines with seq >= before (only the boundary file has any)
             let skip_end = before
                 .map(|b| count.saturating_sub(b - base_seq))
                 .unwrap_or(0);
             let take = want.min((*count - skip_end) as usize);
-            for (k, line) in content
-                .lines()
-                .rev()
-                .skip(skip_end as usize)
-                .take(take)
-                .enumerate()
-            {
+            let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+            let Some(window) = read_tail(p, skip_end, take as u64, size) else {
+                continue;
+            };
+            // window holds exactly the `take` needed lines (oldest->newest
+            // in the String) — rev() yields them newest-first
+            for (k, line) in window.lines().rev().enumerate() {
                 // k < take <= count - skip_end keeps seq >= base_seq
                 let seq = base_seq + count - 1 - skip_end - k as u64;
                 let line = line.strip_suffix('\r').unwrap_or(line);
@@ -585,6 +583,75 @@ fn count_lines(p: &std::path::Path) -> u64 {
         }
     }
     n
+}
+
+/// Read the `take` lines that start `skip` lines from the end of `p`
+/// (`size` = its byte length), as one String (oldest -> newest). Locates the
+/// window by counting newlines BACKWARDS in bounded chunks and then reads
+/// only that byte range, so serving a page from a huge file never holds the
+/// whole file in memory — only the requested lines' bytes (plus one 64 KiB
+/// scan chunk). The sink always terminates lines with '\n'; a hand-appended
+/// final line without one still counts (missing trailing newline = one
+/// boundary at EOF). Invalid UTF-8 degrades lossily instead of failing the
+/// whole read.
+fn read_tail(p: &std::path::Path, skip: u64, take: u64, size: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let need = skip.checked_add(take)?;
+    if need == 0 {
+        return Some(String::new());
+    }
+    let mut f = std::fs::File::open(p).ok()?;
+    // Start of the k-th line from the end = offset just after the (k+1)-th
+    // boundary from the end (a boundary being a '\n', plus a phantom one at
+    // BOF, and one at EOF when the file lacks a trailing newline). So the
+    // window [o1, o2) = lines (skip .. skip+take] from the end is bounded by
+    // boundary #(need+1) and boundary #(skip+1).
+    let mut passed = 0u64;
+    let mut o1: u64 = 0; // start of the first needed line (BOF phantom unless found)
+    let mut o2: u64 = size; // end boundary: start of the line `skip` from the end
+    let mut set_o2 = skip == 0; // skip == 0 -> the window ends at EOF
+    if size > 0 {
+        f.seek(SeekFrom::Start(size - 1)).ok()?;
+        let mut last = [0u8; 1];
+        f.read_exact(&mut last).ok()?;
+        if last[0] != b'\n' {
+            passed = 1; // phantom boundary at EOF terminates the partial last line
+        }
+    }
+    if passed < need + 1 {
+        let mut pos = size;
+        let mut buf = [0u8; 64 * 1024];
+        'scan: while pos > 0 {
+            let chunk = (pos.min(buf.len() as u64)) as usize;
+            let at = pos - chunk as u64;
+            f.seek(SeekFrom::Start(at)).ok()?;
+            f.read_exact(&mut buf[..chunk]).ok()?;
+            for i in (0..chunk).rev() {
+                if buf[i] == b'\n' {
+                    passed += 1;
+                    let after = at + i as u64 + 1;
+                    if !set_o2 && passed == skip + 1 {
+                        o2 = after;
+                        set_o2 = true;
+                    }
+                    if passed == need + 1 {
+                        o1 = after;
+                        break 'scan;
+                    }
+                }
+            }
+            pos = at;
+        }
+        // fewer lines on disk than tracked (external truncation): window
+        // clamps to [BOF, o2)
+    }
+    if o1 >= o2 {
+        return Some(String::new());
+    }
+    let mut bytes = vec![0u8; (o2 - o1) as usize];
+    f.seek(SeekFrom::Start(o1)).ok()?;
+    f.read_exact(&mut bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// RFC3339 UTC with microsecond precision, matching tracing's default timer
