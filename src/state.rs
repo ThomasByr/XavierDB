@@ -294,6 +294,12 @@ pub struct LogFileSink {
     /// so line numbers stay stable across restarts (and across rotations).
     next_seq: u64,
     cur_bytes: u64,
+    /// Per-file line counts, tracked so reads never rescan the whole store
+    /// (a paged read used to count + fully read every file per request,
+    /// which made server RSS climb with every older-page search).
+    /// `cur_lines` = current file; `rotated_lines[i - 1]` = suffix `i`.
+    cur_lines: u64,
+    rotated_lines: Vec<u64>,
     file: Option<std::fs::File>,
 }
 
@@ -305,15 +311,20 @@ impl LogFileSink {
             size_bytes: size_bytes.max(1024),
             next_seq: 0,
             cur_bytes: 0,
+            cur_lines: 0,
+            rotated_lines: Vec::new(),
             file: None,
         };
-        // seed the counter from existing files (restart continuity) and
+        // seed the counters from existing files (restart continuity) and
         // reopen the current file in append mode
+        let mut rotated = vec![0u64; s.files.saturating_sub(1)];
         for i in (1..s.files).rev() {
-            s.next_seq += count_lines(&s.dir.join(format!("{LOG_BASE}.{i}")));
+            rotated[i - 1] = count_lines(&s.dir.join(format!("{LOG_BASE}.{i}")));
         }
         let cur = s.dir.join(LOG_BASE);
-        s.next_seq += count_lines(&cur);
+        s.cur_lines = count_lines(&cur);
+        s.next_seq = rotated.iter().sum::<u64>() + s.cur_lines;
+        s.rotated_lines = rotated;
         s.cur_bytes = std::fs::metadata(&cur).map(|m| m.len()).unwrap_or(0);
         s.file = std::fs::OpenOptions::new()
             .create(true)
@@ -339,6 +350,7 @@ impl LogFileSink {
             {
                 self.cur_bytes += add;
                 self.next_seq += 1;
+                self.cur_lines += 1;
             }
         }
     }
@@ -353,6 +365,14 @@ impl LogFileSink {
         }
         let cur = self.dir.join(LOG_BASE);
         let _ = std::fs::rename(&cur, self.dir.join(format!("{LOG_BASE}.1")));
+        // shift the tracked counts with the files: .i -> .i+1, current -> .1
+        if self.files > 1 {
+            for i in (1..self.files - 1).rev() {
+                self.rotated_lines[i] = self.rotated_lines[i - 1];
+            }
+            self.rotated_lines[0] = self.cur_lines;
+        }
+        self.cur_lines = 0;
         self.cur_bytes = 0;
         self.file = std::fs::OpenOptions::new()
             .create(true)
@@ -376,40 +396,72 @@ impl LogFileSink {
         Vec<String>,
     ) {
         let total = self.next_seq;
-        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        // files oldest -> newest with their tracked line counts
+        let mut files: Vec<(std::path::PathBuf, u64)> = Vec::new();
         for i in (1..self.files).rev() {
             let p = self.dir.join(format!("{LOG_BASE}.{i}"));
             if p.exists() {
-                paths.push(p);
+                files.push((p, self.rotated_lines[i - 1]));
             }
         }
         let cur = self.dir.join(LOG_BASE);
         if cur.exists() {
-            paths.push(cur);
+            files.push((cur, self.cur_lines));
         }
-        let counts: Vec<u64> = paths.iter().map(|p| count_lines(p)).collect();
+        // seq of the first line of each file (prefix sums over oldest->newest)
+        let mut base = 0u64;
+        let mut bases = Vec::with_capacity(files.len());
+        for (_, c) in &files {
+            bases.push(base);
+            base = base.saturating_add(*c);
+        }
         let mut collected: Vec<LogEntry> = Vec::new();
         let mut want = if limit == 0 {
             usize::MAX
         } else {
             limit.max(LOG_FACET_LINES)
         };
-        'walk: for (idx, p) in paths.iter().enumerate().rev() {
+        // Walk newest -> oldest, collecting the newest `want` entries below
+        // `before`. Memory-bounded: files that cannot contribute are never
+        // opened (entirely at/after `before`, or `want` already satisfied),
+        // and each opened file is read once into a single buffer whose lines
+        // are walked backwards with iterator adapters — skipped lines cost
+        // zero allocations (the old code materialized a String per line of
+        // EVERY file on EVERY request).
+        'walk: for (idx, (p, count)) in files.iter().enumerate().rev() {
             if want == 0 {
                 break;
             }
-            let base_seq = counts[..idx].iter().sum::<u64>();
-            let lines = read_lines(p);
-            for (li, line) in lines.iter().enumerate().rev() {
-                let seq = base_seq + li as u64;
-                if before.is_some_and(|b| seq >= b) {
-                    continue;
-                }
+            if *count == 0 {
+                continue;
+            }
+            let base_seq = bases[idx];
+            if before.is_some_and(|b| base_seq >= b) {
+                continue; // whole file lives at/after `before` — skip it
+            }
+            let Ok(content) = std::fs::read_to_string(p) else {
+                continue;
+            };
+            // tail lines with seq >= before (only the boundary file has any)
+            let skip_end = before
+                .map(|b| count.saturating_sub(b - base_seq))
+                .unwrap_or(0);
+            let take = want.min((*count - skip_end) as usize);
+            for (k, line) in content
+                .lines()
+                .rev()
+                .skip(skip_end as usize)
+                .take(take)
+                .enumerate()
+            {
+                // k < take <= count - skip_end keeps seq >= base_seq
+                let seq = base_seq + count - 1 - skip_end - k as u64;
+                let line = line.strip_suffix('\r').unwrap_or(line);
                 let (level, logger, msg) = parse_level_msg(line);
                 let (name, app) = log_identify(&msg);
                 collected.push(LogEntry {
                     seq,
-                    raw: line.clone(),
+                    raw: line.to_string(),
                     level,
                     logger,
                     app,
@@ -533,16 +585,6 @@ fn count_lines(p: &std::path::Path) -> u64 {
         }
     }
     n
-}
-
-fn read_lines(p: &std::path::Path) -> Vec<String> {
-    std::fs::read_to_string(p)
-        .map(|s| {
-            s.lines()
-                .map(|l| l.trim_end_matches('\r').to_string())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
 }
 
 /// RFC3339 UTC with microsecond precision, matching tracing's default timer
