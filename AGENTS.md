@@ -70,7 +70,7 @@ npm install && npm run build     # rebuild dashboard TS -> src/assets/app.js (on
 (cd web && npm install && npm run docs:build)  # rebuild VitePress site (web/ is its own npm project)
 # typecheck: npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
 cargo build                      # fails while the server is running on some OSes — see rule 4
-cargo test                       # 66 unit + 118 integration; needs a running server + MongoDB
+cargo test                       # 68 unit + 118 integration; needs a running server + MongoDB
 ./target/debug/XavierDB          # from repo root; cwd-relative state files; no CLI args
                                  # (settings: server.yml + env overrides; no .env)
 ```

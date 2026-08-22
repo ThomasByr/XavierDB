@@ -85,10 +85,12 @@ validation) map to 400; duplicate keys → 409.
   climb): the sink TRACKS per-file line counts (`cur_lines` + `rotated_lines`,
   maintained on write/rotate, seeded at startup) so reads never recount the
   store; files entirely at/after `before` (or after `want` is satisfied) are
-  never OPENED, and each opened file is read once into a single buffer whose
-  lines are walked newest→oldest with iterator adapters — skipped lines cost
-  zero allocations (the old code materialized a `Vec<String>` of EVERY line
-  of EVERY file on EVERY request).
+  never OPENED, and each opened file is read as a TAIL WINDOW ONLY —
+  `read_tail` locates the byte range of the needed lines by counting
+  newlines backwards in 64 KiB chunks, then reads just that range, so a
+  paged request holds the bytes of its ≤ max(limit, LOG_FACET_LINES) lines,
+  never a whole multi-MB file (verified flat RSS over 2400 reads of a 12 MB
+  file).
 - `GET /dashboard/api/databases` → `{databases:[{name, collections}],
   unavailable}` — admin-only, unfiltered (client-side equivalent: `/ls`).
 
