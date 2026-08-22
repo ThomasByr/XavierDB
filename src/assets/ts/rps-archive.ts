@@ -3,7 +3,6 @@
 // every /metrics poll and downsamples into tiered time buckets, persisted in
 // localStorage — windows up to a year survive reloads. Coverage is limited
 // to times the dashboard was open (gaps compress, they don't interpolate).
-// to times the dashboard was open (gaps compress, they don't interpolate).
 export const RPS_TIERS: [resSec: number, keepSec: number][] = [
   [10, 1800], // 30 min @ 10 s
   [60, 10800], // 3 h @ 1 min
