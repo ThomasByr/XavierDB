@@ -93,11 +93,34 @@ function renderLogList(scrollBottom = false) {
 /// Same predicate as renderLogList (logMatches), so composed filters (OR
 /// within a category, AND across, + regex) work unchanged.
 const MAX_AUTO_PAGES = 40;
+/// Cap on rows retained in the client ring (logLoaded + the DOM). Old pages
+/// always live in the rotated on-disk files and can be re-fetched, so
+/// dropping the oldest once a session pulls in too much history only bounds
+/// memory — searches keep finding old lines, and RAM stops climbing forever.
+const LOG_MAX = LOG_PAGE * (MAX_AUTO_PAGES + 2);
 let logEnsureRunning = false;
 
 function logStatus(msg: string) {
   const s = $("#logs-status");
   if (s) s.textContent = msg;
+}
+
+/// Drop the oldest retained rows (and their DOM rows via a re-render) once the
+/// client holds more than LOG_MAX. Evicted pages are re-fetchable from the log
+/// files, so this only prevents an unbounded session from pinning old pages in
+/// memory; the newest entry is always preserved. Called with logBusy set (from
+/// fetchOlder), so the nested renderLogList's ensureMatches bails — no recursion.
+function pruneRetained() {
+  const over = logLoaded.length - LOG_MAX;
+  if (over <= 0) return;
+  logLoaded.splice(0, over);
+  if (logLoaded.length) {
+    logOldestSeq = logLoaded[0].seq;
+  } else {
+    logOldestSeq = 0;
+    logNoMore = true;
+  }
+  renderLogList();
 }
 
 async function ensureMatches() {
@@ -287,6 +310,7 @@ async function fetchOlder(): Promise<number> {
     }
     box.insertBefore(frag, box.firstChild);
     box.scrollTop += box.scrollHeight - h0;
+    pruneRetained();
     return added;
   } catch (e: any) {
     snack(e.message);
