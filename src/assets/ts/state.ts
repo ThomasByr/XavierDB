@@ -8,7 +8,7 @@ import { rpsArchive } from "./rps-archive";
 import { renderOverview, renderOverviewData } from "./view-overview";
 import { renderClients, renderClientsData } from "./view-clients";
 import { renderConfig } from "./view-config";
-import { renderLogs } from "./view-logs";
+import { renderLogs, releaseLogs } from "./view-logs";
 
 export async function api(path: string, opts: RequestInit = {}): Promise<any> {
   const res = await fetch("/dashboard/api" + path, {
@@ -189,15 +189,29 @@ const routes: Record<string, () => void> = {
   logs: renderLogs,
 };
 
+/// Optional per-view cleanup when switching away from its tab. A view only
+/// needs an entry here if it holds memory that should not outlive being on
+/// that tab — e.g. logs: releaseLogs frees the client-side retained ring
+/// (filters are kept, so the user's filtered view is restored on return).
+/// The router calls this BEFORE rendering the incoming view.
+const leaves: Partial<Record<string, () => void>> = {
+  logs: releaseLogs,
+};
+
 export let currentRoute = "overview";
 let pollTimer = 0;
 let pollEnabled = true;
 
 export function route() {
   const hash = location.hash.replace(/^#\//, "").split("?")[0] || "overview";
+  const prev = currentRoute;
   currentRoute = routes[hash] ? hash : "overview";
   $$(".nav-item").forEach((n) => n.classList.toggle("active", n.getAttribute("data-route") === currentRoute));
   $("#page-title").textContent = currentRoute[0].toUpperCase() + currentRoute.slice(1);
+  // Leave hook runs before the incoming view renders, so the outgoing tab's
+  // memory is freed before the new one allocates. No-op on first boot or a
+  // same-route re-entry (prev === currentRoute).
+  if (prev !== currentRoute) leaves[prev]?.();
   routes[currentRoute]();
   // metrics are polled on every tab — views render only on their own route,
   // but the RPS archive (overview chart) must keep sampling everywhere

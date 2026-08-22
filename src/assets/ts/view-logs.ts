@@ -20,6 +20,9 @@ let logNames: { app: string; name: string }[] = [];
 let logLoggers: string[] = [];
 let logBusy = false;
 let logSuggTimer = 0;
+// bumped on every fresh base load / release so an in-flight fetchOlder that
+// started before can detect its page is stale and discard it (gen guard).
+let logGen = 0;
 // OR within a category, AND across categories: e.g. (DEBUG or INFO) and (app A or app B).
 const logFilters = {
   levels: [] as string[],
@@ -121,6 +124,26 @@ function pruneRetained() {
     logNoMore = true;
   }
   renderLogList();
+}
+
+/// Drop the client-side retained log ring and facet lists when the Logs tab is
+/// left. The log store is on-disk and stateless (see state.rs LogFileSink), so
+/// the retained pages are pure refetchable client cache — returning to the tab
+/// re-fetches the newest page and re-runs the search, nothing is lost. The
+/// filter state (logFilters) is deliberately kept: that is what restores the
+/// user's active filtered view on return. Bumping logGen invalidates any
+/// fetchOlder in flight so a stale older page can't repopulate the cleared
+/// ring.
+export function releaseLogs() {
+  logLoaded = [];
+  logTotal = 0;
+  logOldestSeq = 0;
+  logNoMore = true;
+  logApps = [];
+  logNames = [];
+  logLoggers = [];
+  clearTimeout(logSuggTimer);
+  logGen++;
 }
 
 async function ensureMatches() {
@@ -270,12 +293,14 @@ function logsFetch(before?: number): Promise<any> {
 async function fetchOlder(): Promise<number> {
   if (logBusy || logNoMore || logOldestSeq <= 0) return -1;
   logBusy = true;
+  const gen = logGen;
   const before = logOldestSeq;
   const box = $("#logs-box") as HTMLElement;
   const h0 = box.scrollHeight;
   let added = 0;
   try {
     const d = await logsFetch(before);
+    if (gen !== logGen) return 0; // ring was cleared/loaded while this paged
     logTotal = d.total;
     if (d.lines.length === 0) {
       logNoMore = true;
@@ -405,6 +430,7 @@ export async function renderLogs() {
 
   const box = $("#logs-box") as HTMLElement;
   const load = async () => {
+    logGen++; // any fetchOlder in flight is now stale — don't splice onto this fresh ring
     try {
       const d = await logsFetch();
       logLoaded = d.lines;
@@ -506,9 +532,12 @@ export async function renderLogs() {
     logFilters.names = [];
     logFilters.regex = "";
     renderLogBadges();
-    renderLogList();
     renderLogSugg();
     setHint();
+    // back to the default Logs view: newest 300 lines unfiltered (the same
+    // fresh page a first tab entry loads — load() also bumps logGen so any
+    // in-flight older-page fetch is discarded rather than spliced onto it).
+    load();
   };
   // Re-render the active filter chips after the DOM rebuild on each tab
   // entry: logFilters persists across route switches, so the previously set
