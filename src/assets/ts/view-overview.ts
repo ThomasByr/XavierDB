@@ -823,21 +823,38 @@ function drawRpsHover(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // rows: every app (legend order), name_ids nested under expanded ones
+  // rows: every app, name_ids nested under expanded ones
   interface Row {
     app: boolean;
     label: string;
     value: number;
     color: string;
   }
-  const rows: Row[] = [];
+  const natural: Row[] = [];
   for (const s of series) {
-    rows.push({ app: true, label: s.app, value: interp(s.pts, t), color: s.color });
+    natural.push({ app: true, label: s.app, value: interp(s.pts, t), color: s.color });
     const st = stacks.find((x2) => x2.app === s.app);
     if (st)
       for (let i = 0; i < st.names.length; i++)
-        rows.push({ app: false, label: st.names[i], value: interp(st.bandPts[i], t), color: st.color });
+        natural.push({ app: false, label: st.names[i], value: interp(st.bandPts[i], t), color: st.color });
   }
+  /* Hover rows re-ordered by the RPS at the cursor (highest on top). The
+     legend keeps its alphabetical order — only this panel is sorted.
+     Global: app blocks move as whole units so a details app keeps its
+     nested name_id rows in their natural chart order. Focus: the flat
+     name_id rows sort directly. */
+  const rows: Row[] =
+    rpsMode === "focus"
+      ? [...natural].sort((a, b) => b.value - a.value)
+      : (() => {
+          const blocks: { app: Row; names: Row[] }[] = [];
+          for (const r of natural) {
+            if (r.app) blocks.push({ app: r, names: [] });
+            else blocks[blocks.length - 1]?.names.push(r);
+          }
+          blocks.sort((a, b) => b.app.value - a.app.value);
+          return blocks.flatMap((b) => [b.app, ...b.names]);
+        })();
   const vals = rows.map((r) => fmtNum(r.value, 1));
 
   // measure + place the panel (flip to the left near the right edge)
