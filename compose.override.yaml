@@ -15,7 +15,7 @@
 # -f compose.yaml ...) is untouched: this override tags its own image.
 
 services:
-  api:
+  xavierdb:
     develop:
       watch: []
 
