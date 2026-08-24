@@ -1,14 +1,26 @@
-// Long-window RPS history for the overview "all apps" chart. The server only
-// keeps ~120 ticks (~10 min) of sparkline history, so the dashboard samples
-// every /metrics poll and downsamples into tiered time buckets, persisted in
-// localStorage — windows up to a year survive reloads. Coverage is limited
-// to times the dashboard was open (gaps compress, they don't interpolate).
+// Long-window RPS history for the overview "all apps" chart. The dashboard
+// samples every /metrics poll and downsamples into tiered time buckets,
+// persisted in localStorage — windows up to a year survive reloads. Coverage
+// is limited to times the dashboard was open (gaps compress, they don't
+// interpolate).
+//
+// Tiers are independent of the backend tick: the finest tier buckets at 1 s
+// (the practical cap is the dashboard poll interval, default 2 s), so point
+// density follows whatever rate data actually arrives at. `window()` reads
+// the finest tier covering the X window, then re-bins to at most
+// RPS_TARGET_POINTS points — with a 5 s backend tick a 10-minute window tops
+// out below target, with a faster tick it reaches it.
+export const RPS_TARGET_POINTS = 300;
 export const RPS_TIERS: [resSec: number, keepSec: number][] = [
-  [10, 1800], // 30 min @ 10 s
-  [60, 10800], // 3 h @ 1 min
-  [300, 43200], // 12 h @ 5 min
-  [1800, 259200], // 3 d @ 30 min
-  [21600, 1814400], // 21 d @ 6 h
+  [1, 600], // 10 min @ 1 s
+  [4, 2400], // 40 min @ 4 s
+  [12, 3600], // 1 h @ 12 s
+  [60, 36000], // 10 h @ 1 min
+  [300, 180000], // 50 h @ 5 min
+  [900, 259200], // 3 d @ 15 min
+  [1800, 1209600], // 2 w @ 30 min
+  [7200, 5259600], // 2 mo @ 2 h
+  [21600, 7889400], // 3 mo @ 6 h
   [86400, 34560000], // 400 d @ 1 d
 ];
 export const RPS_WINDOWS: [label: string, sec: number][] = [
@@ -47,7 +59,8 @@ interface RpsTier {
   vs: number[];
   open: { t: number; sum: number; n: number } | null;
 }
-const RPS_ARCHIVE_LS = "xdb-rps-archive-v1";
+const RPS_ARCHIVE_LS = "xdb-rps-archive-v2";
+const RPS_ARCHIVE_V1_LS = "xdb-rps-archive-v1";
 
 class RpsArchive {
   private series: Record<string, { lastT: number; tiers: RpsTier[] }> = {};
@@ -66,6 +79,11 @@ class RpsArchive {
       }
     } catch {
       /* corrupted archive — start fresh */
+    }
+    try {
+      localStorage.removeItem(RPS_ARCHIVE_V1_LS); // superseded layout: discard, start blank
+    } catch {
+      /* storage unavailable */
     }
     return a;
   }
@@ -117,8 +135,9 @@ class RpsArchive {
     }
   }
 
-  /* buckets of the finest tier covering `windowSec` (closed + the open one) —
-     works for any series key: app ids and "name:<id>@<app>" breakdown keys */
+  /* buckets of the finest tier covering `windowSec` (closed + the open one),
+     re-binned to at most RPS_TARGET_POINTS points across the window — works
+     for any series key: app ids and "name:<id>@<app>" breakdown keys */
   window(keys: string[], windowSec: number, nowSec: number): Map<string, { t: number; v: number }[]> {
     let ti = RPS_TIERS.findIndex(([, keep]) => keep >= windowSec);
     if (ti < 0) ti = RPS_TIERS.length - 1;
@@ -133,7 +152,7 @@ class RpsArchive {
           if (tier.ts[i] + res > t0) pts.push({ t: tier.ts[i] + res / 2, v: tier.vs[i] });
         if (tier.open && tier.open.n) pts.push({ t: tier.open.t + res / 2, v: tier.open.sum / tier.open.n });
       }
-      out.set(key, pts);
+      out.set(key, rebin(pts, RPS_TARGET_POINTS, t0, nowSec));
     }
     return out;
   }
@@ -155,6 +174,28 @@ class RpsArchive {
     }
   }
 }
+
+/* re-bin `pts` into at most `target` equal-width time bins over [t0, t1]:
+   each output point is the average of the bin's points, timestamped at the
+   bin center. Empty bins are skipped, so gaps stay gaps. Returns `pts`
+   unchanged when it already fits the target. */
+function rebin(pts: { t: number; v: number }[], target: number, t0: number, t1: number): { t: number; v: number }[] {
+  if (pts.length <= target || t1 <= t0) return pts;
+  const w = (t1 - t0) / target;
+  const acc: { s: number; n: number }[] = Array.from({ length: target }, () => ({ s: 0, n: 0 }));
+  for (const p of pts) {
+    let b = Math.floor((p.t - t0) / w);
+    if (b < 0) b = 0;
+    else if (b >= target) b = target - 1;
+    acc[b].s += p.v;
+    acc[b].n++;
+  }
+  const out: { t: number; v: number }[] = [];
+  for (let b = 0; b < target; b++)
+    if (acc[b].n) out.push({ t: t0 + (b + 0.5) * w, v: acc[b].s / acc[b].n });
+  return out;
+}
+
 export const rpsArchive = RpsArchive.load();
 window.addEventListener("beforeunload", () => {
   rpsArchive.flushIfDirty();
