@@ -1,5 +1,25 @@
 // Canvas drawing primitives: sparklines, mini area charts, stable per-app colors.
 // Pure rendering — no state, no fetches.
+
+/* TensorBoard-style scalar smoothing (their vz_line_chart resmoothDataset):
+   a 1st-order IIR low-pass (EMA) computed at DRAW time over the raw series,
+   so the "Chart smoothing" slider re-smooths the whole visible history
+   instantly. a=0 returns the input unchanged (smoothing off); a is clamped
+   to 0.99 because a=1 decays to a flat zero line (why TensorBoard also caps
+   below 1). The debias division (1 - w^n) removes the EMA's bias toward the
+   series start (TensorBoard issue #610). */
+export function emaSmooth(data: number[], a: number): number[] {
+  if (data.length < 2 || a <= 0) return data;
+  const w = Math.min(a, 0.99);
+  const out: number[] = new Array(data.length);
+  let last = 0;
+  for (let i = 0; i < data.length; i++) {
+    last = last * w + (1 - w) * data[i];
+    out[i] = last / (1 - Math.pow(w, i + 1));
+  }
+  return out;
+}
+
 export function sparkline(canvas: HTMLCanvasElement, data: number[], color: string, max = 0): void {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || 120;

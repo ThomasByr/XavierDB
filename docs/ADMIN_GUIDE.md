@@ -28,9 +28,9 @@ peer address, or `X-Real-IP` / the last `X-Forwarded-For` entry when
 System metrics polled every few seconds (per-browser poll interval, default
 2 s — see the Settings popover in the top bar): CPU, memory, disk, network
 (KB/s), plus QPS, MongoDB ping and uptime. Graphs are smoothed client-side
-(smoothing window also lives in the Settings popover; both are saved in
-localStorage, i.e. per browser). The golden rule for the Config page:
-*anything that could need tuning is tunable here.*
+(TensorBoard-style EMA; the coefficient also lives in the Settings popover,
+0 = raw — both are saved in localStorage, i.e. per browser). The golden rule
+for the Config page: *anything that could need tuning is tunable here.*
 
 ### Clients
 Tree of `app_id → name_id`, each node showing smoothed requests/second

@@ -179,7 +179,12 @@ class RpsArchive {
    each output point is the average of the bin's points, timestamped at the
    bin center. Empty bins are skipped, so gaps stay gaps. Returns `pts`
    unchanged when it already fits the target. */
-function rebin(pts: { t: number; v: number }[], target: number, t0: number, t1: number): { t: number; v: number }[] {
+function rebin(
+  pts: { t: number; v: number }[],
+  target: number,
+  t0: number,
+  t1: number,
+): { t: number; v: number }[] {
   if (pts.length <= target || t1 <= t0) return pts;
   const w = (t1 - t0) / target;
   const acc: { s: number; n: number }[] = Array.from({ length: target }, () => ({ s: 0, n: 0 }));
@@ -191,8 +196,7 @@ function rebin(pts: { t: number; v: number }[], target: number, t0: number, t1: 
     acc[b].n++;
   }
   const out: { t: number; v: number }[] = [];
-  for (let b = 0; b < target; b++)
-    if (acc[b].n) out.push({ t: t0 + (b + 0.5) * w, v: acc[b].s / acc[b].n });
+  for (let b = 0; b < target; b++) if (acc[b].n) out.push({ t: t0 + (b + 0.5) * w, v: acc[b].s / acc[b].n });
   return out;
 }
 

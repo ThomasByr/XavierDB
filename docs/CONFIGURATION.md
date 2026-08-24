@@ -101,7 +101,7 @@ Other clamps: `multiplier` 0.05–20, `target_latency_ms` 1–60 000,
 `cache_ttl_seconds` 1–3600, `jwt_token_lifetime_minutes` 1–43 200; invalid
 `log_level` values fall back to `info`.
 
-Dashboard theme, graph smoothing window and metrics poll interval are
+Dashboard theme, chart smoothing coefficient and metrics poll interval are
 **per-browser** preferences (localStorage), set from the dashboard top bar
 (theme toggle + Settings popover) — they are not part of the server config.
 

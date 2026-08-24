@@ -1,10 +1,10 @@
 // Overview tab: stat chips, system mini-charts, the all-apps RPS chart
 // (shared scale + selectable time window) and the top-apps traffic table.
 import { $, el, esc, fmtNum, fmtBytes, fmtUptime, fmtRate } from "./core";
-import { sparkline, drawMini, lineColor, getCss, withAlpha } from "./charts";
+import { sparkline, drawMini, lineColor, getCss, withAlpha, emaSmooth } from "./charts";
 import { rpsArchive, RPS_WINDOWS, getRpsWindowIdx, setRpsWindowIdx } from "./rps-archive";
 import { updateMongoStatus } from "./mongo";
-import { lastMetrics, Metrics, AppNode, systemSeries, systemHistory } from "./state";
+import { lastMetrics, Metrics, AppNode, systemHistory, getChartSmoothing } from "./state";
 /* ============================= overview ============================= */
 
 interface ChartDef {
@@ -188,10 +188,9 @@ export function renderOverviewData(m: Metrics) {
       chips.append(card);
     }
   }
-  const smooth = (key: string, raw: number) => {
-    const v = systemSeries[key].push(raw);
+  const record = (key: string, raw: number) => {
     const h = systemHistory[key];
-    h.push(v);
+    h.push(raw);
     if (h.length > 90) h.shift();
     return h;
   };
@@ -200,7 +199,7 @@ export function renderOverviewData(m: Metrics) {
     if (!c) continue;
     c.value.textContent = d.fmt(s);
     c.sub.textContent = d.sub(s);
-    drawMini(c.canvas, smooth(d.key, d.raw(s)), getCss(d.color));
+    drawMini(c.canvas, emaSmooth(record(d.key, d.raw(s)), getChartSmoothing()), getCss(d.color));
   }
   updateMongoStatus(m.health);
   renderOvAlert(m);
@@ -524,6 +523,15 @@ function buildNameStacks(m: Metrics, apps: string[], win: number, nowSec: number
   return stacks;
 }
 
+/* EMA over the y-values of a {t, v} series, keeping timestamps */
+function smoothPts(pts: { t: number; v: number }[], a: number): { t: number; v: number }[] {
+  const vs = emaSmooth(
+    pts.map((p) => p.v),
+    a,
+  );
+  return pts.map((p, i) => ({ t: p.t, v: vs[i] }));
+}
+
 function updateRpsChart(m: Metrics) {
   const canvas = $("#ov-rps-canvas") as HTMLCanvasElement | null;
   if (!canvas) return;
@@ -556,6 +564,18 @@ function updateRpsChart(m: Metrics) {
       cur.set(app, m.apps.find((x) => x.app === app)?.rps ?? 0);
     }
     stacks = buildNameStacks(m, apps, win, nowSec);
+  }
+  /* TensorBoard-style EMA applied at draw time over each plotted series
+     (app lines, stacked cumulative bands + their per-band outlines — linear
+     filter, so smoothing the cum rows ≡ cumulating the smoothed bands and
+     the stack still sums to the smoothed app line). a=0 = raw. */
+  const alpha = getChartSmoothing();
+  if (alpha > 0) {
+    for (const s of series) s.pts = smoothPts(s.pts, alpha);
+    for (const st of stacks) {
+      st.cum = st.cum.map((row) => emaSmooth(row, alpha));
+      st.bandPts = st.bandPts.map((band) => smoothPts(band, alpha));
+    }
   }
   let peak = 0;
   for (const s of series) for (const p of s.pts) if (p.v > peak) peak = p.v;

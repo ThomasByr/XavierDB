@@ -907,7 +907,10 @@ mod tests {
         }
         seen.sort(); // order-insensitive: every seq must appear exactly once
         let expect: Vec<u64> = (0..40).collect();
-        assert_eq!(seen, expect, "older-page walk covers every seq exactly once");
+        assert_eq!(
+            seen, expect,
+            "older-page walk covers every seq exactly once"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -935,7 +938,10 @@ mod tests {
                 count_lines(&p)
             })
             .sum();
-        assert_eq!(tracked, on_disk, "tracked counts match disk after rotations");
+        assert_eq!(
+            tracked, on_disk,
+            "tracked counts match disk after rotations"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

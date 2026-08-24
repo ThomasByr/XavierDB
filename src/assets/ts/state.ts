@@ -27,31 +27,20 @@ export async function api(path: string, opts: RequestInit = {}): Promise<any> {
   return body;
 }
 
-/* EMA smoothing (client-side) */
-class Smoother {
-  private buf: number[] = [];
-  constructor(
-    private window: number,
-    private alpha = 0.35,
-  ) {}
-  push(v: number): number {
-    this.buf.push(v);
-    if (this.buf.length > this.window) this.buf.shift();
-    const base = this.buf[this.buf.length - 1];
-    let acc = base;
-    for (let i = this.buf.length - 2; i >= 0; i--) acc = this.alpha * this.buf[i] + (1 - this.alpha) * acc;
-    return acc;
-  }
-}
 /* client-side preferences, persisted in localStorage (per browser):
-   graph smoothing window (samples) + metrics poll interval (seconds). */
-export function getSmoothingWindow(): number {
-  const v = parseInt(localStorage.getItem("xdb-smoothing") || "", 10);
-  return Number.isInteger(v) && v >= 1 && v <= 60 ? v : 5;
+   chart smoothing coefficient (0..1, TensorBoard-style EMA — see
+   charts.ts emaSmooth) + metrics poll interval (seconds). Separate key
+   from the old "xdb-smoothing" window setting so stale 1..20 values
+   can't collide with the 0..1 range. */
+export function getChartSmoothing(): number {
+  const v = parseFloat(localStorage.getItem("xdb-smoothing-alpha") || "");
+  return isFinite(v) && v >= 0 && v <= 1 ? v : 0.6;
 }
-export function setSmoothingWindow(v: number) {
-  localStorage.setItem("xdb-smoothing", String(v));
-  reseedSmoothers();
+export function setChartSmoothing(v: number) {
+  localStorage.setItem("xdb-smoothing-alpha", String(v));
+  // smoothing is applied at draw time — re-render the overview now so the
+  // change is visible immediately instead of at the next poll
+  if (lastMetrics && currentRoute === "overview") renderOverviewData(lastMetrics);
 }
 export function getPollInterval(): number {
   const v = parseFloat(localStorage.getItem("xdb-poll") || "");
@@ -113,7 +102,9 @@ export interface Metrics {
 }
 
 export let lastMetrics: Metrics | null = null;
-export let systemSeries: Record<string, Smoother> = {};
+/* RAW (unsmoothed) per-key history for the overview mini charts — the EMA
+   is applied at draw time (charts.ts emaSmooth) so the smoothing slider
+   re-smooths history instantly. */
 export let systemHistory: Record<string, number[]> = {
   cpu: [],
   mem: [],
@@ -121,15 +112,6 @@ export let systemHistory: Record<string, number[]> = {
   rx: [],
   tx: [],
 };
-
-export function seedSmoothers() {
-  if (Object.keys(systemSeries).length === 0) reseedSmoothers();
-}
-function reseedSmoothers() {
-  const win = getSmoothingWindow();
-  for (const k of Object.keys(systemSeries)) delete systemSeries[k];
-  for (const k of Object.keys(systemHistory)) systemSeries[k] = new Smoother(win);
-}
 
 export function showLogin() {
   $("#app").classList.add("hidden");
@@ -237,7 +219,6 @@ export async function poll() {
   try {
     const m: Metrics = await api("/metrics");
     lastMetrics = m;
-    seedSmoothers();
     rpsArchive.sample(m.apps, Date.now());
     if (currentRoute === "overview") renderOverviewData(m);
     if (currentRoute === "clients") renderClientsData(m);

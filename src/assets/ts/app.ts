@@ -9,8 +9,8 @@ import {
   showLogin,
   checkSession,
   initLogin,
-  getSmoothingWindow,
-  setSmoothingWindow,
+  getChartSmoothing,
+  setChartSmoothing,
   getPollInterval,
   setPollInterval,
 } from "./state";
@@ -26,7 +26,7 @@ function applyTheme(t: string) {
 }
 
 /* Settings popover: per-browser display preferences (localStorage):
-   graph smoothing window + metrics poll interval. */
+   chart smoothing coefficient + metrics poll interval. */
 let settingsPop: HTMLElement | null = null;
 
 function closeSettingsPop() {
@@ -75,15 +75,7 @@ function openSettingsPop() {
   const pop = el("div", { class: "settings-pop elevation-3" });
   pop.append(
     el("h3", {}, ["Dashboard settings"]),
-    sliderRow(
-      "Graph smoothing window",
-      1,
-      20,
-      1,
-      getSmoothingWindow(),
-      (v) => `${v} samples`,
-      setSmoothingWindow,
-    ),
+    sliderRow("Chart smoothing", 0, 1, 0.01, getChartSmoothing(), (v) => v.toFixed(2), setChartSmoothing),
     sliderRow("Poll interval", 0.1, 10, 0.1, getPollInterval(), (v) => `${v.toFixed(1)} s`, setPollInterval),
     el("p", { class: "sp-hint" }, ["Saved in this browser (localStorage) — not server config."]),
   );
