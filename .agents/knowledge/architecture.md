@@ -473,11 +473,20 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   picker; the picker offers live apps plus a saved-but-not-live
   selection. jsdom verification: `focus-repro.mjs` (see
   skills/dashboard-rebuild.md).
-- RPS long-window archive (`RpsArchive`, ts/rps-archive.ts): the server keeps only ~120
-  ticks (~10 min) of `rps_history`, so the dashboard samples every /metrics
-  poll into tiered average buckets (10s/1m/5m/30m/6h/1d resolutions) and
-  persists them to localStorage `xdb-rps-archive-v1` (saved ≥ every 30 s +
-  on unload; apps unseen for 40 d pruned). Since 2026-08-18 the same
+- RPS long-window archive (`RpsArchive`, ts/rps-archive.ts): the server only
+  serves ~120 ticks of `rps_history`, so the dashboard samples every /metrics
+  poll into tiered average buckets (1s/4s/12s/1m/5m/15m/30m/2h/6h/1d
+  resolutions; since 2026-08-24 the tier ladder is BACKEND-TICK-INDEPENDENT
+  — the finest tier buckets at 1 s, the practical cap being the dashboard
+  poll interval, default 2 s) and persists them to localStorage
+  `xdb-rps-archive-v2` (saved ≥ every 30 s + on unload; apps unseen for 40 d
+  pruned; a v1 archive auto-migrates at load: points flattened and
+  re-bucketed through the current tiers). `window()` reads the finest tier
+  covering the X window and re-bins it to ≤ `RPS_TARGET_POINTS` = 300
+  points (bin averages, bin-center timestamps, empty bins skipped so gaps
+  stay gaps) — point density follows whatever rate data actually arrives:
+  with the default 5 s backend tick a 10-minute window tops out at ~120
+  points, with a faster tick it reaches 300. Since 2026-08-18 the same
   archive also samples each name_id series (keys `name:<id>@<app>`),
   feeding the "Show details" breakdown; name history starts collecting
   from first deployment of this feature and, like app history, covers only

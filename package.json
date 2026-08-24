@@ -22,6 +22,7 @@
     "@release-it/bumper": "^8.0.0",
     "esbuild": "^0.28.2",
     "git-cliff": "^2.13.1",
+    "jsdom": "^24.1.3",
     "release-it": "^21.0.2"
   }
 }

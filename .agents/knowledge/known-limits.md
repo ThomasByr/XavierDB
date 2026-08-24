@@ -9,7 +9,9 @@
   only for times the dashboard was open (gaps compress on the x-axis), it is
   per-browser/per-profile (another browser or incognito starts empty), and
   server restarts don't clear it. The server itself still only serves ~120
-  ticks (~10 min) of `rps_history` per app/name.
+  ticks (~10 min at the default 5 s tick) of `rps_history` per app/name;
+  the archive compensates with ≤300-point window re-binning whose density
+  is capped by the actual poll/backend-tick cadence (no upsampling).
 - Keyset pagination refuses (400) to continue past a page whose sort field
   contains an **array** value — MongoDB's element-wise array sort cannot be
   represented in a keyset cursor; silent loss/loops would be worse. NaN/±Inf

@@ -21,7 +21,12 @@ build (esbuild) and the embed (rustc) are TWO separate steps.
   - `rps-archive.ts` — tiered long-window RPS history (localStorage); stores
   app series AND `name:<id>@<app>` series (feeds the "Show details"
   stacked breakdown) under the same map + localStorage
-  `xdb-rps-archive-v1`
+  `xdb-rps-archive-v2` (v1 keys auto-migrate: stored points are flattened
+  and re-bucketed through the current tiers at load). Since 2026-08-24
+  tiers are backend-tick-independent (finest 1 s) and `window()` re-bins
+  every X window to ≤ `RPS_TARGET_POINTS` = 300 points: density follows
+  the actual sample cadence — a 5 s backend tick caps a 10-min window at
+  ~120 points, a faster tick reaches 300
   - `charts.ts` — sparkline, drawMini, getCss, lineColor palette, withAlpha
   - `mongo.ts` — topbar MongoDB status widget
   - `view-overview.ts` / `view-clients.ts` / `view-config.ts` / `view-logs.ts`
@@ -68,8 +73,16 @@ behavior — the tooltip lists DRAWN bands only) and `focus-repro.mjs`
 (2026-08-21: Global ⇄ Focus segmented switch in the RPS card header, ▾
 app-picker popover, focus legend/summary/title, Show-details disabled in
 Focus, localStorage persistence + restore).
-Harness copies live in the dev machine's temp dir (see
-`.pi/notes/credentials.md`).
+Since 2026-08-24 all harnesses live IN THE REPO at `tests/dashboard/*.mjs`
+(no more temp-dir copies): each resolves the repo root via
+`REPO = process.env.XDB_REPO || fileURLToPath(new URL("../..",
+import.meta.url))` and reads `src/assets/{index.html,app.js}` directly
+(same bytes as the compile-time embed — re-run `npm run build` first);
+jsdom comes from the root `package.json` devDependencies. Run from the
+repo root: `node tests/dashboard/<name>.mjs`.
+`rps-archive-repro.mjs` (2026-08-24) needs no jsdom: it esbuild-bundles
+`ts/rps-archive.ts` alone and verifies tier subsampling (300-point target,
+data-capped at the sample cadence) + the v1→v2 localStorage migration.
 
 ## UI gotchas (architecture context)
 
