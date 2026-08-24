@@ -529,14 +529,21 @@ limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
   (no baseline diff) — accepted. Per-browser display prefs live in
   localStorage, NOT server config: theme (`localStorage["xdb-theme"]`,
   default dark; `#theme-btn` in the topbar toggles it — sun/moon icons +
-  Light/Dark label), graph smoothing window (`xdb-smoothing`, default 5,
-  slider 1–20) and metrics poll interval (`xdb-poll`, default 2 s, slider
-  0.1–10). The last two are edited in the `#settings-btn` popover (gear +
-  "Settings" topbar button; `settings-pop` CSS, outside-click closes):
-  smoothing changes re-seed the `Smoother` instances (state.ts
-  `reseedSmoothers`, buffers reset), poll changes call `restartPolling()`
-  immediately. Accessors in state.ts: get/setSmoothingWindow,
-  get/setPollInterval.
+  Light/Dark label), chart smoothing coefficient (`xdb-smoothing-alpha`,
+  default 0.6, slider 0–1 step 0.01, 0 = raw) and metrics poll interval
+  (`xdb-poll`, default 2 s, slider 0.1–10). The last two are edited in the
+  `#settings-btn` popover (gear + "Settings" topbar button; `settings-pop`
+  CSS, outside-click closes). Chart smoothing is a TensorBoard-style EMA
+  (`emaSmooth` in charts.ts — their `resmoothDataset`: 1st-order IIR low-pass
+  + debias division, α clamped to 0.99) computed AT DRAW TIME over the raw
+  series: the overview mini charts keep raw history in `systemHistory`
+  (state.ts) and the RPS chart smooths each plotted series/stack row in
+  `updateRpsChart` (linear filter → smoothed cum rows ≡ cumulated smoothed
+  bands, so stacks still sum to the smoothed app line) — moving the slider
+  re-smooths the whole visible history instantly (state.ts
+  `setChartSmoothing` re-renders the overview; sparklines stay raw); poll
+  changes call `restartPolling()` immediately. Accessors in state.ts:
+  get/setChartSmoothing, get/setPollInterval.
   Blocked identifiers card = full-width below
   the columns.
 - Logs tab: file-backed store (see config-world.md + api.md logs endpoint).

@@ -75,6 +75,12 @@ Machine facts worth knowing:
   EXCEPTION: `watcher_reload` is expected to FAIL on Docker Desktop (inotify
   does not work over VirtioFS bind mounts — see docker.md); everything else
   is green (verified 108/110, 2026-08-16).
+- Live-config flakiness (observed 2026-08-24): if the live `config` has an
+  aggressive `rate_limit.tick_seconds` (e.g. 1 instead of the default 5),
+  battery load can transiently shrink the adaptive limit mid-run → flaky
+  `multi_app` failures (`adaptive_limit_cap`, `concurrent_writers`; enforced
+  limit dips far below the expected 200/40). The limit recovers at
+  `growth_rate` per tick — a rerun passes. Not a code regression.
 - If `server.yml` has NO `auth.jwt_secret`, the secret is random per restart → cached
   JWTs die on restart; the battery self-heals (probe → 401 → re-login;
   ~9 logins ≈ 45 s once per server start, within the 30/min throttle).
