@@ -1,5 +1,5 @@
 // Topbar repro (2026-08-21): theme button (sun/moon + label), settings popover
-// (graph smoothing + poll interval sliders, localStorage persistence).
+// (chart smoothing coefficient + poll interval sliders, localStorage persistence).
 // Drives the REAL served bundle fetched fresh from the running server.
 import { JSDOM } from "jsdom";
 import { readFileSync } from "fs";
@@ -31,7 +31,19 @@ window.fetch = async (url, opts = {}) => {
         ts: 0,
         qps: 0,
         config: { cfg_version: 0, perms_version: 0, health_ttl_seconds: 5, multiplier: 1 },
-        system: {},
+        system: {
+          cpu_pct: 12.5,
+          mem_pct: 40,
+          mem_used_mb: 4096,
+          mem_total_mb: 16384,
+          disk_pct: 55,
+          disk_used_mb: 550,
+          disk_total_mb: 1000,
+          net_rx_kbps: 10,
+          net_tx_kbps: 5,
+          uptime_s: 100,
+          ts_ms: 0,
+        },
         health: {},
         apps: [],
         cursors: { count: 0, list: [] },
@@ -77,22 +89,22 @@ check("popover opens", !!pop);
 const sliders = pop ? pop.querySelectorAll("input[type=range]") : [];
 check("two sliders", sliders.length === 2, String(sliders.length));
 const vals = pop ? Array.from(pop.querySelectorAll(".sp-val")).map((n) => n.textContent) : [];
-check("smoothing default 5 samples", vals[0] === "5 samples", vals.join(", "));
+check("smoothing default 0.60", vals[0] === "0.60", vals.join(", "));
 check("poll default 2.0 s", vals[1] === "2.0 s", vals.join(", "));
 
 // move both sliders (input then change)
 if (pop) {
   const [sm, pl] = sliders;
-  sm.value = "12";
+  sm.value = "0.85";
   sm.dispatchEvent(new window.Event("input", { bubbles: true }));
   sm.dispatchEvent(new window.Event("change", { bubbles: true }));
   pl.value = "0.5";
   pl.dispatchEvent(new window.Event("input", { bubbles: true }));
   pl.dispatchEvent(new window.Event("change", { bubbles: true }));
-  check("live value updates (smoothing)", pop.querySelectorAll(".sp-val")[0].textContent === "12 samples");
+  check("live value updates (smoothing)", pop.querySelectorAll(".sp-val")[0].textContent === "0.85");
   check("live value updates (poll)", pop.querySelectorAll(".sp-val")[1].textContent === "0.5 s");
 }
-check("localStorage xdb-smoothing=12", window.localStorage.getItem("xdb-smoothing") === "12");
+check("localStorage xdb-smoothing-alpha=0.85", window.localStorage.getItem("xdb-smoothing-alpha") === "0.85");
 check("localStorage xdb-poll=0.5", window.localStorage.getItem("xdb-poll") === "0.5");
 
 // ---------- outside click closes ----------
@@ -107,7 +119,7 @@ w2.matchMedia = window.matchMedia;
 w2.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, { get: () => () => ({ width: 10 }) });
 w2.fetch = window.fetch;
 w2.localStorage.setItem("xdb-theme", "light");
-w2.localStorage.setItem("xdb-smoothing", "12");
+w2.localStorage.setItem("xdb-smoothing-alpha", "0.85");
 w2.localStorage.setItem("xdb-poll", "0.5");
 w2.eval(appjs);
 w2.dispatchEvent(new w2.Event("load"));
