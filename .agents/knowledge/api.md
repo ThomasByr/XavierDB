@@ -4,7 +4,7 @@
 
 | route | auth | behavior |
 |---|---|---|
-| `POST /auth` | public (throttled) | login → JWT + cookie (see architecture.md Auth) |
+| `POST /auth` | public (throttled) | login → JWT + cookie (see architecture/auth.md) |
 | `GET /q/{db}/{coll}` | Bearer or cookie | query: `filter`/`sort`/`projection` URL-encoded JSON, `limit`, `cursor`; keyset pagination |
 | `POST /q/{db}/{coll}` | Bearer | insert (no filter) / update (filter) — data auto-`$set` |
 | `PUT /q/{db}/{coll}` | Bearer | update, 404 if 0 matched |
@@ -67,7 +67,7 @@ validation) map to 400; duplicate keys → 409.
   be POSTed verbatim. `POST /perms/reload` re-reads yml.
 - `GET /dashboard/api/config` → `{version, config, history (NEWEST-first),
   undo_available, redo_available}`; `POST /config` sanitizes/clamps (exact
-  ranges in architecture.md Config); undo/redo/reload (fallback to config.bak
+  ranges in architecture/config-file.md); undo/redo/reload (fallback to config.bak
   on corruption, returns `warning`)/revert `{index}` (newest-first display
   position)/reset/export (JSON attachment)/import. undo/redo/reload/reset are
   POST-with-NO-body (`{}` → 400). Config mutations hot-apply log_level via

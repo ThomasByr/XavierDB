@@ -3,7 +3,7 @@
 #
 # Dev loop: the API runs `cargo watch` INSIDE the container and recompiles
 # from the bind-mounted repo. `--poll` is essential on Docker Desktop:
-# VirtioFS delivers no inotify events (see .agents/skills/docker.md), and a
+# VirtioFS delivers no inotify events (see .agents/skills/docker/SKILL.md), and a
 # native cargo-watch inside the container would never see host-side edits.
 # The poll watcher stats mtimes through virtiofsd, which IS coherent — so
 # host edits trigger rebuilds.

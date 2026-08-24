@@ -1,5 +1,10 @@
 # Perms/config watcher — snapshot & restore ritual
 
+> **Script:** `perms-watcher.sh` (same dir) — `snapshot <file> [label] |
+> restore <file> [snapshot] | list [<file>]`. Prefer it over hand-typed
+> `cp` commands; snapshot dir + defaults overridable via `XDB_*` env (see
+> `.agents/settings/defaults.sh`).
+
 For testing permission or config changes and verifying hot reload (notify
 watcher, 500 ms debounce):
 

@@ -53,7 +53,7 @@
   object, INVALID_PROJECTION 400), union+strip scheme keeps the keyset cursor
   correct (Mongo always sees sort fields + `_id`; client sees only requested
   fields). Dotted/nested projection keys and `$`-operators rejected
-  (top-level only, v1). Details: architecture.md Projection.
+  (top-level only, v1). Details: architecture/proxy.md (Projection).
 - **Verified live by the battery (2026-08-14)** — behaviors worth knowing:
   - Include-only projections STRIP `_id` unless explicitly requested:
     `{name:1}` → docs have only `name`; `{name:1,_id:1}` keeps it. `{_id:0}`
@@ -80,7 +80,7 @@
   - Insert-many (2026-08-15): `data` as array → `insert_many` (cap 1000,
     empty/non-object element/dup-`_id`-within-batch → 400 with NOTHING
     inserted; dup against existing data → 409 with ordered semantics, docs
-    before the dup remain). Driver 3.8 facts: see architecture.md Batch
+    before the dup remain). Driver 3.8 facts: see architecture/proxy.md (Batch writes)
     write driver facts. Batch size counts into per-client rate accounting.
 - **Array `_id` (`{"_id":[]}`) maps to 500** — Mongo error code 53 ("_id"
   cannot be an array) is not in the client-code list in error.rs; arguably a
@@ -108,7 +108,7 @@
   hosts pass). Settings precedence: env var > server.yml > default (so
   compose injects HOST/MONGODB_URI into the container; bare metal uses the
   file) — except admin.username/password_hash, which always come from the
-  file (Windows always sets USERNAME). Details: skills/docker.md.
+  file (Windows always sets USERNAME). Details: skills/docker/SKILL.md.
 - `config` hot-reload + atomic-rename editors (vim etc.) may detach the notify
   watcher — restart re-attaches.
 
@@ -118,7 +118,7 @@
   exclusions in .dockerignore, Cargo.lock in the dummy layer, shared
   registry/target cache mounts; the target-cache dummy-binary trap is fixed
   via `cargo clean -p XavierDB --release` in the dummy step. Src-only
-  rebuild ≈ 13 s. Details + traps: skills/docker.md "Build speed" section.
+  rebuild ≈ 13 s. Details + traps: skills/docker/SKILL.md (Build speed).
 - **Performance verification — deferred (2026-08-11, user decision).** No
   perf work in the 3 review rounds (correctness/security/contracts only).
   No benchmarks, no profiling, no load tests in the repo. Natural first steps
@@ -136,6 +136,8 @@ array-sort pagination are covered live by tests/pagination.rs
 `nan_sort_paginates` + `array_sort_guard` through the server's own Mongo
 connection; crud_verbs.rs talks to Mongo directly with XDB_TB_MONGO_URI,
 default mongodb://localhost:27017), full auth→/q→/ls→health curl cycle, perms
-watcher restore cycle (skills/perms-watcher-ritual.md). When src/ changed,
-the battery needs the kill → `cargo build --tests` → restart ritual first
-(skills/restart-ritual.md).
+watcher restore cycle (skills/perms-watcher-ritual/SKILL.md). Tests run
+against the Docker stack by default (`xdb-compose.sh up` → `battery.sh run`);
+when src/ changed, rebuild the image first. The bare-metal fallback (docker
+issues) needs its own kill → `cargo build --tests` → start ritual first
+(skills/docker-fallback/SKILL.md).

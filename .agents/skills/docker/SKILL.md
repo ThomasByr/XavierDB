@@ -1,5 +1,19 @@
 # Docker / compose deployment — VERIFIED 2026-08-16 on Docker Desktop 29.7.2 (WSL2)
 
+> **Script:** `xdb-compose.sh` (same dir) — `up | watch | build [--no-cache] |
+> logs [-f] | password | restart | ps | down | deploy | battery | mongo`. Prefer it over
+> hand-typed commands; defaults overridable via `XDB_*` env (see
+> `.agents/settings/defaults.sh`).
+
+**This stack is the DEFAULT for running, building, deploying AND testing** —
+tests run against these containers unless Docker itself is broken (then
+`skills/docker-fallback/SKILL.md`; MongoDB STAYS in Docker even there).
+
+**MongoDB is ALWAYS launched with Docker:** the compose `mongodb` service
+(`docker compose up -d mongodb`), or a standalone `docker run -p 27017:27017
+mongo:8.0` when you need it on the host network without the stack. Never
+start a bare-metal `mongod` on the toolchain path.
+
 First real run: `docker compose up --build -d` worked end to end on the dev
 machine (Docker Desktop 29.7.2, WSL2 backend, overlayfs). The integration
 battery (local rust, `cargo test`) against the docker stack is 180/182 —

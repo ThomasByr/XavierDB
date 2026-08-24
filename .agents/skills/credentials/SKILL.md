@@ -1,5 +1,11 @@
 # Credentials — machine-local secrets & regeneration recipes
 
+> **Scripts:** `hash-token.py` (Argon2id-hash a token via `uv run --with
+> argon2-cffi python …`, token from argv or stdin `-`) and `gen-cert.sh`
+> (self-signed TLS cert/key, MSYS path-conversion trap handled). Prefer them
+> over hand-typed commands; defaults overridable via `XDB_*` env (see
+> `.agents/settings/defaults.sh`).
+
 **Actual credentials are NEVER in repo files.** They are machine-local and
 live in `.pi/notes/credentials.md` (gitignored via `.pi/.gitignore` — it
 contains `*`; read it when you need them). Never commit or copy secrets into

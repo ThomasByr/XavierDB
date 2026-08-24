@@ -1,5 +1,9 @@
 # Examples crate — runnable client examples
 
+> **Script:** `examples.sh` (same dir) — `build | list | run <bin> [-- args…]`.
+> Prefer it over hand-typed commands; defaults overridable via `XDB_*` env
+> (see `.agents/settings/defaults.sh`).
+
 9 examples, each = `setup_<name>.rs` (dashboard API: admin login + perms POST
 creating app/token/rights) + `<name>.rs` (client API showcase). All verified
 E2E against a live server; every command in examples/README.md works.

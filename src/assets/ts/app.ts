@@ -1,7 +1,7 @@
 // XavierDB dashboard — vanilla TypeScript, zero libraries.
 // Hash-routed SPA: overview / clients / config / logs.
 // Entry point: theme, topbar shell wiring, login boot. All views and state
-// live in the view-*/state modules; see .agents/knowledge/architecture.md.
+// live in the view-*/state modules; see .agents/knowledge/architecture/dashboard.md.
 
 import { $, el, fmtNum, snack } from "./core";
 import {

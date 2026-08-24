@@ -1,7 +1,13 @@
 # Dashboard rebuild cycle (compile-time embed — 2 steps!)
 
+> **Script:** `xdb-dashboard.sh` (same dir) — `bundle | typecheck | all |
+> harness <name.mjs> | harnesses`. Prefer it over hand-typed commands; defaults
+> overridable via `XDB_*` env (see `.agents/settings/defaults.sh`).
+
 The SPA is embedded via `include_str!` AT COMPILE TIME. **ANY asset change —
-TS, CSS, HTML — needs: kill server → `cargo build --tests` → restart.**
+TS, CSS, HTML — needs: bundle + stack re-serve: DEFAULT `xdb-compose.sh up`
+(rebuids the image); fallback (docker issues) kill → `cargo build --tests` →
+start.**
 CSS-only changes skip npm/tsc but still need the server rebuild. The bundle
 build (esbuild) and the embed (rustc) are TWO separate steps.
 
@@ -32,7 +38,7 @@ build (esbuild) and the embed (rustc) are TWO separate steps.
   - `view-overview.ts` / `view-clients.ts` / `view-config.ts` / `view-logs.ts`
   — one module per tab (overview holds the all-apps RPS chart + window
   popover + "Show details" name_id breakdown popover + hover
-  crosshair/tooltip — see knowledge/architecture.md "Overview")
+  crosshair/tooltip — see knowledge/architecture/dashboard.md "Overview")
   - `perm-widget.ts` — permission editor + effective rules (driven by
   view-clients; receives the live db list via `PermCtx.dbs` to stay
   cycle-free)
@@ -47,7 +53,9 @@ build (esbuild) and the embed (rustc) are TWO separate steps.
 npm run build     # esbuild ts/app.ts -> src/assets/app.js (skip if CSS/HTML-only)
 # typecheck (esbuild does NOT typecheck):
 #   npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom src/assets/ts/app.ts
-# then the server ritual: kill -> cargo build --tests -> start (restart-ritual.md)
+# then re-serve the new embed: DEFAULT `xdb-compose.sh up` (rebuilds the image);
+# fallback (docker issues): the kill -> cargo build --tests -> start ritual
+# (docker-fallback/SKILL.md)
 ```
 
 ## Browser-behavior debugging without a browser (jsdom harness)
@@ -88,6 +96,6 @@ data-capped at the sample cadence) + the v1→v2 localStorage migration.
 
 - Config tab save is EXPLICIT — slider edits alone don't persist; a reload
   discards them (dirty pill + disabled Save while clean; see
-  knowledge/architecture.md Dashboard).
+  knowledge/architecture/dashboard.md).
 - Any new theme-aware CSS token must land in ALL THREE theme blocks
   (`:root`, dark media query, `[data-theme="dark"]`).

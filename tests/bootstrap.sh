@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bootstrap the xavierdb_tb_* fixture world for the integration battery (tests/).
 #
-# Requires: a RUNNING server + MongoDB (see `.agents/skills/build-run-test.md`). Idempotent:
+# Requires: a RUNNING server + MongoDB (see `.agents/skills/build-run-test/SKILL.md`). Idempotent:
 # re-running is safe and skips the (slow, ~5 s each) token re-hashing when
 # the fixture apps already exist.
 #

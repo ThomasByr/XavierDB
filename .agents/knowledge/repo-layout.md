@@ -5,16 +5,22 @@ XavierDB/
 ├── README.md                    # quick start (Docker-first) + bare metal in <details>
 ├── LICENSE                      # MIT, Copyright (c) 2026 Thomas BOUYER
 ├── AGENTS.md                    # minimum instructions + pointers to .agents/
-├── .agents/                     # agent knowledge + skills (this tree)
-│   ├── knowledge/               #   reference facts (architecture, API contracts, ...)
-│   └── skills/                  #   procedural how-tos (restart ritual, build, battery, ...)
+├── .agents/                     # agent knowledge + skills + personas + settings (this tree)
+│   ├── INDEX.md                 #   the single index (knowledge + skills + personas + settings)
+│   ├── knowledge/               #   reference facts (architecture/, api, config-world, ...)
+│   │   └── architecture/        #     split per topic: auth, perms, proxy, ls, adaptive-limit,
+│   │                            #     config-file, health, tls, dashboard (+ README section map)
+│   ├── skills/                  #   procedural how-tos: each <skill>/SKILL.md + a runnable script
+│   │                            #   (xdb-restart.sh, build.sh, battery.sh, xdb-dashboard.sh, ...)
+│   ├── personas/                #   role briefs for focused sub-agents (rust, dashboard, docs, security)
+│   └── settings/                #   defaults.sh (script defaults) + README
 ├── docs/                        # the full documentation set
 │   ├── ADMIN_GUIDE.md           #   dashboard views, ops, troubleshooting, sparse dashboard API section
 │   ├── API_REFERENCE.md         #   client API only + verified JS/Python examples
 │   └── CONFIGURATION.md         #   config file fields, adaptive-limit formula, perms format
 ├── compose.yaml                 # 2 services: mongodb (vanilla MongoDB) + xavierdb (the Rust API); xavierdb mounts repo over /app
 ├── Dockerfile                   # node stage (esbuild) + single-stage rust:1-slim-bookworm build/run
-├── .dockerignore                # full exclusions (dirs, state files, *.md/*.swp/*.tmp) — see skills/docker.md
+├── .dockerignore                # full exclusions (dirs, state files, *.md/*.swp/*.tmp) — see skills/docker/SKILL.md
 ├── .gitignore                   # /target, .env, server.yml, authorized_keys.yml, config, config.bak*, node_modules/
 ├── .github/workflows/            # CI/CD
 │   └── deploy-site.yml           #   VitePress site -> GitHub Pages (xavierdb.fr) on web/** changes
@@ -39,7 +45,7 @@ XavierDB/
 │   │   meta_endpoints.rs, multi_app.rs, pagination.rs, perms_matrix.rs, projection.rs,
 │   │   query_filters.rs, smoke.rs, watcher_reload.rs   # 118 tests, ~30 s full run
 │   └── dashboard/                 #   jsdom dashboard harnesses (`*-repro.mjs`, run per file with node —
-│       # see skills/dashboard-rebuild.md; jsdom in root package.json devDependencies)
+│       # see skills/dashboard-rebuild/SKILL.md; jsdom in root package.json devDependencies)
 │       # config-*, details-, focus-, logs-*, rps-*, threshold-, topbar-repro.mjs +
 │       # rps-archive-repro.mjs (no jsdom: bundles ts/rps-archive.ts with esbuild)
 ├── server.yml.example          # documented settings template (copy to server.yml; embedded in the binary)

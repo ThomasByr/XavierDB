@@ -1,7 +1,7 @@
 //! Shared helpers for the XavierDB integration battery (tests/).
 //!
 //! Black-box HTTP tests against a RUNNING server + MongoDB. Requirements and
-//! the run ritual are documented in `.agents/skills/build-run-test.md`; the
+//! the run ritual are documented in `.agents/skills/build-run-test/SKILL.md`; the
 //! fixture world below is created by the bootstrap script.
 #![allow(dead_code)] // shared fixture: each test binary uses only a subset
 //!
@@ -97,7 +97,7 @@ pub fn ensure_server() {
     }
     panic!(
         "XavierDB server not reachable at {} ({last})\n\
-         start MongoDB + the API first (see `.agents/skills/build-run-test.md`) and optionally set XDB_TB_BASE",
+         start MongoDB + the API first (see `.agents/skills/build-run-test/SKILL.md`) and optionally set XDB_TB_BASE",
         base()
     );
 }
