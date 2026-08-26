@@ -1,0 +1,58 @@
+# Prod overlay — the OVH VPS (8 GB RAM). Apply with:
+#   docker compose -f compose.base.yaml -f compose.prod.yaml up -d --build
+# deploy.sh pins exactly this pair. xdb-compose.sh uses it when XDB_ENV=prod.
+#
+# Resource numbers are parameterized with the VPS values as defaults — tune
+# them in .env (see .env.example) without touching YAML. KEEP THEM
+# CONSISTENT (compose cannot derive one from another):
+#   - WiredTiger cache ~ HALF the mongo memory limit (the rest covers
+#     connections, sort buffers, filesystem cache) — too high and the cgroup
+#     OOM-kills mongod.
+#   - memswap = memory limit + swap headroom.
+#
+# MIGRATION NOTE (one-time): the previous prod stack ran MongoDB on the
+# NAMED volume xavierdb_xavier_mongo_db. Moving to the bind mount below
+# starts with an EMPTY database — migrate first (on the VPS):
+#   docker compose -f compose.base.yaml -f compose.prod.yaml down
+#   mkdir -p "$XAVIER_MONGO_DATA"   # default ${HOME}/data/xavier-mongo-db
+#   docker run --rm -v xavierdb_xavier_mongo_db:/from -v "$XAVIER_MONGO_DATA":/to \
+#     alpine sh -c 'cp -a /from/. /to/'
+# then bring the new stack up.
+#
+# The mongo service runs with the image default user (no `user:` override):
+# the official entrypoint starts as root, chowns the bind-mounted data dir,
+# then drops to the mongodb user — required for a host bind mount to be
+# writable.
+
+services:
+  mongodb:
+    deploy:
+      resources:
+        limits:
+          memory: ${XAVIER_MONGO_MEM:-7g}          # cgroup hard cap
+          cpus: "${XAVIER_MONGO_CPUS:-3.0}"
+    memswap_limit: ${XAVIER_MONGO_MEMSWAP:-8.5g}  # 7g RAM + 1.5g swap
+    command: >
+      --wiredTigerCacheSizeGB ${XAVIER_WT_CACHE_GB:-3.5}
+      --setParameter wiredTigerConcurrentReadTransactions=64
+      --setParameter wiredTigerConcurrentWriteTransactions=64
+    volumes:
+      # Host bind mount: mongo data is a plain folder on the VPS — easy to
+      # back up and inspect (dev/pre use the named volume instead).
+      - "${XAVIER_MONGO_DATA:-${HOME}/data/xavier-mongo-db}:/data/db"
+
+  xavierdb:
+    deploy:
+      resources:
+        limits:
+          memory: ${XAVIER_API_MEM:-0.5g}
+          cpus: "${XAVIER_API_CPUS:-1.0}"
+    memswap_limit: ${XAVIER_API_MEMSWAP:-1g}       # 0.5g RAM + 0.5g swap
+    environment:
+      # Trust X-Real-IP / X-Forwarded-For for the client IP (throttles + logs).
+      # Safe here BECAUSE the port below is published to 127.0.0.1 ONLY: the
+      # sole connector is the host's nginx (prod), which sets X-Real-IP — no
+      # external client can reach the server directly to spoof headers.
+      # If you ever publish the port to other interfaces, REMOVE this line
+      # (see server.yml.example network.trust_proxy_headers).
+      - TRUST_PROXY_HEADERS=true

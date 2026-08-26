@@ -1,33 +1,42 @@
+# Base compose file — config COMMON to all environments.
+#
+# NEVER used alone: compose is always invoked with an explicit overlay
+# (xdb-compose.sh / deploy.sh do this for you):
+#   docker compose -f compose.base.yaml -f compose.dev.yaml   # dev loop (cargo watch)
+#   docker compose -f compose.base.yaml -f compose.pre.yaml   # pre-prod (default)
+#   docker compose -f compose.base.yaml -f compose.prod.yaml  # prod (deploy.sh)
+#
+# The overlays own the per-environment deltas: resource limits + memswap,
+# the MongoDB `command` (WiredTiger cache differs per env), the MongoDB DATA
+# volume (named volume dev/pre, host bind mount prod), the dev cargo-watch
+# loop, and TRUST_PROXY_HEADERS (prod only).
+#
+# Merge rules (`docker compose -f a -f b`): scalars/maps are overridden by
+# the later file; volumes merge by CONTAINER target path (an overlay
+# re-mounting /data/db replaces the base mount); ports concatenate (identical
+# in every overlay here, so they live only in the base).
+#
+# End users deploying their own instance: do NOT use these files directly —
+# copy compose.example.yaml to compose.yaml instead (it is standalone,
+# documented, and gitignored so your copy stays local).
+
 services:
   mongodb:
     restart: unless-stopped
     image: mongodb/mongodb-community-server:latest  # official MongoDB Community image
     container_name: MongoDB
-    user: ":"
     environment:
       - TZ=Europe/Paris
     ports:
       - "127.0.0.1:27017:27017"                     # bind only to localhost
     volumes:
-      # Persistent data directory
-      - "${HOME}/data/xavier-mongo-db:/data/db"     # keep only one of the following two
-      # - xavier_mongo_db:/data/db                  # uncomment the named volume at the end
-      # Configuration
+      # The DATA volume (/data/db) is per-environment: named volume in the
+      # dev/pre overlays, host bind mount in prod. Configuration:
       - xavier_configdb:/data/configdb
-    deploy:
-      resources:
-        limits:
-          memory: 7.0g                              # Docker enforces the cgroup memory limit
-          cpus: "3.0"                               # full CPU cores
-    command: >
-      --wiredTigerCacheSizeGB 3.5
-      --setParameter wiredTigerConcurrentReadTransactions=64
-      --setParameter wiredTigerConcurrentWriteTransactions=64
     ulimits:
       nofile:
         soft: 65536                                 # raise soft limit
         hard: 1048576                               # raise hard limit
-    memswap_limit: 7.5g                             # caps RAM+swap
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -40,6 +49,7 @@ services:
       timeout: 10s
       start_period: 10s
       retries: 100
+
   xavierdb:
     restart: unless-stopped
     # No `image:` key on purpose: with both `build:` and `image:`, compose
@@ -56,27 +66,17 @@ services:
       # server.yml with host=127.0.0.1 / localhost mongo (bare-metal defaults)
       # must not reach a container: loopback is unreachable via the published
       # port and "localhost" is the API container itself. `.env` is only
-      # UID/GID (compose interpolation) — the app never reads it.
+      # UID/GID + prod resource tuning (compose interpolation) — the app
+      # never reads it.
       - HOST=0.0.0.0                               # bind all interfaces inside the container
       - MONGODB_URI=mongodb://mongodb:27017        # mongo service name; default localhost won't work
-      # Trust X-Real-IP / X-Forwarded-For for the client IP (throttles + logs).
-      # Safe here BECAUSE the port below is published to 127.0.0.1 ONLY: the
-      # sole connector is the host's nginx (prod), which sets X-Real-IP — no
-      # external client can reach the server directly to spoof headers.
-      # If you ever publish the port to other interfaces, REMOVE this line
-      # (see server.yml.example network.trust_proxy_headers).
-      - TRUST_PROXY_HEADERS=true
+      # TRUST_PROXY_HEADERS lives in compose.prod.yaml / compose.example.yaml
+      # (reverse-proxy setups only).
     working_dir: /app
     volumes:
       - ".:/app"                                   # repo root = single source of truth: server.yml, config, config.bak, authorized_keys.yml
     ports:
       - "127.0.0.1:8000:8000"                      # forward the API on port 8000
-    deploy:
-      resources:
-        limits:
-          memory: 0.5g
-          cpus: "1.0"
-    memswap_limit: 1.5g
     depends_on:
       mongodb:
         condition: service_healthy
@@ -91,15 +91,6 @@ services:
       timeout: 3s
       start_period: 10s
       retries: 3
-    develop:
-      watch:
-        # the source is not mounted (unlike the legacy python setup), so
-        # rebuild the image on source changes instead of syncing files
-        - action: rebuild
-          path: ./Cargo.toml
-        - action: rebuild
-          path: ./src
 
 volumes:
-  # xavier_mongo_db:                               # uncomment if you don't use a persistent data directory
   xavier_configdb:

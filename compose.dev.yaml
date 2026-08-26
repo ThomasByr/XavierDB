@@ -1,0 +1,55 @@
+# Dev overlay — the Docker Desktop dev loop. Apply with:
+#   docker compose -f compose.base.yaml -f compose.dev.yaml up -d --build
+# (xdb-compose.sh does this when XDB_ENV=dev.)
+#
+# The API runs `cargo watch` INSIDE the container and recompiles from the
+# bind-mounted repo. `--poll` is essential on Docker Desktop: VirtioFS
+# delivers no inotify events (see .agents/skills/docker/SKILL.md), and a
+# native cargo-watch inside the container would never see host-side edits.
+# The poll watcher stats mtimes through virtiofsd, which IS coherent — so
+# host edits trigger rebuilds.
+#
+# First `up -d --build` builds Dockerfile.dev (a few minutes:
+# cargo install cargo-watch); the first in-container `cargo run --release`
+# compiles the full dep tree into the target-cache volume once, later runs
+# are incremental. Other stacks are untouched: this overlay tags its own
+# image (xavierdb-api-dev).
+#
+# The API container has NO resource limits ON PURPOSE: in-container cargo
+# builds (rustc + linker) spike hard and the test databases are small — let
+# builds use whatever the host has.
+
+services:
+  # No resource limits and no --wiredTigerCacheSizeGB override in dev
+  mongodb:
+    user: ":"
+    volumes:
+      - xavier_mongo_db:/data/db
+
+  xavierdb:
+    image: xavierdb-api-dev
+    build:
+      dockerfile: Dockerfile.dev
+
+    # Watch ONLY the code: the repo mount also holds runtime state files the
+    # server rewrites itself (authorized_keys.yml on new-name logins, config,
+    # logs) — watching those would rebuild+restart on every login.
+    command: cargo watch --poll -w src -w Cargo.toml -x "run --release"
+
+    volumes:
+      - cargo-cache:/cargo-home/registry
+      - target-cache:/app/target
+
+    environment:
+      - CARGO_HOME=/cargo-home
+
+    healthcheck:
+      interval: 5s
+      timeout: 2s
+      retries: 3
+
+
+volumes:
+  xavier_mongo_db:
+  cargo-cache:
+  target-cache:

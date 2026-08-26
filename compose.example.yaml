@@ -1,0 +1,109 @@
+# XavierDB — example PROD deployment (standalone: no overlay files needed).
+#
+# How to use (Linux host with Docker + Compose v2):
+#   1. git clone this repo && cd into it
+#   2. cp compose.example.yaml compose.yaml
+#   3. cp .env.example .env   — then edit UID/GID and the resource values
+#      for YOUR host (every ${VAR} below has a default tuned for 8 GB RAM)
+#   4. cp server.yml.example server.yml && touch authorized_keys.yml
+#   5. docker compose up -d --build
+#   6. docker compose logs xavierdb   # first-run dashboard password (printed
+#      ONCE, hashed into server.yml on first boot)
+#
+# All resource ${VARS} are set in .env (see .env.example for the full list
+# and the consistency rules). KEEP THEM CONSISTENT (compose cannot derive
+# one from another):
+#   - XAVIER_WT_CACHE_GB ~ HALF of XAVIER_MONGO_MEM (the rest of the limit
+#     covers connections, sort buffers, filesystem cache) — too high and the
+#     cgroup OOM-kills mongod.
+#   - memswap = memory limit + swap headroom.
+#
+# MongoDB data lives in a plain host folder (default ./data/mongo, relative
+# to this file) — back it up like any other directory. The mongo container
+# runs with the image defaults: the entrypoint starts as root, chowns the
+# data dir, then drops to the mongodb user.
+#
+# The API is published on 127.0.0.1:8000 ONLY — put a reverse proxy (nginx,
+# Caddy, Traefik) in front for TLS. That is what TRUST_PROXY_HEADERS=true
+# assumes. If you instead expose the port directly, REMOVE that line.
+
+services:
+  mongodb:
+    restart: unless-stopped
+    image: mongodb/mongodb-community-server:latest  # official MongoDB Community image
+    container_name: MongoDB
+    environment:
+      - TZ=Europe/Paris
+    ports:
+      - "127.0.0.1:27017:27017"                     # bind only to localhost
+    volumes:
+      - "${XAVIER_MONGO_DATA:-./data/mongo}:/data/db"
+      - xavier_configdb:/data/configdb
+    deploy:
+      resources:
+        limits:
+          memory: ${XAVIER_MONGO_MEM:-7g}           # cgroup hard cap
+          cpus: "${XAVIER_MONGO_CPUS:-3.0}"
+    command: >
+      --wiredTigerCacheSizeGB ${XAVIER_WT_CACHE_GB:-3.5}
+      --setParameter wiredTigerConcurrentReadTransactions=64
+      --setParameter wiredTigerConcurrentWriteTransactions=64
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 1048576
+    memswap_limit: ${XAVIER_MONGO_MEMSWAP:-8.5g}    # 7g RAM + 1.5g swap
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >
+          test -f /tmp/mongo_ready && exit 0 ||
+          (mongosh --quiet --eval "db.adminCommand('ping').ok" &&
+          touch /tmp/mongo_ready) ||
+          exit 1
+      interval: 5s
+      timeout: 10s
+      start_period: 10s
+      retries: 100
+
+  xavierdb:
+    restart: unless-stopped
+    build: .
+    container_name: XavierDB
+    user: "$UID:$GID"                              # run as the host user, not root (UID/GID from .env)
+    environment:
+      - TZ=Europe/Paris
+      - HOST=0.0.0.0                               # bind all interfaces inside the container
+      - MONGODB_URI=mongodb://mongodb:27017        # mongo service name; default localhost won't work
+      # Trust X-Real-IP / X-Forwarded-For for the client IP (throttles +
+      # logs). Safe ONLY with the 127.0.0.1-only port binding above + a
+      # reverse proxy that sets those headers. Remove if exposing directly.
+      - TRUST_PROXY_HEADERS=true
+    working_dir: /app
+    volumes:
+      - ".:/app"                                   # repo root = single source of truth: server.yml, config, authorized_keys.yml
+    ports:
+      - "127.0.0.1:8000:8000"                      # forward the API on port 8000
+    deploy:
+      resources:
+        limits:
+          memory: ${XAVIER_API_MEM:-0.5g}
+          cpus: "${XAVIER_API_CPUS:-1.0}"
+    memswap_limit: ${XAVIER_API_MEMSWAP:-1g}       # 0.5g RAM + 0.5g swap
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      # cheap local curl against the cached /health; the https fallback
+      # keeps the check green when TLS is enabled in server.yml (with TLS the
+      # plain-http listener does not exist at all)
+      test:
+        - "CMD-SHELL"
+        - curl -fsS http://localhost:8000/health || curl -fksS https://localhost:8000/health
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  xavier_configdb:

@@ -1,6 +1,7 @@
 target/
 examples/target/
 .env
+compose.yaml
 server.yml
 authorized_keys.yml
 config
