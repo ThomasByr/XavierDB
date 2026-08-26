@@ -50,7 +50,7 @@ see `settings/`).
 | `build-run-test/` | Docker-first build/test pipeline (battery vs the stack), examples, fallback notes | `build.sh` (`bundle / typecheck / server [--release] / all`) + `battery.sh` (`bootstrap / run / single <area> / all`) |
 | `dashboard-rebuild/` | dashboard asset rebuild cycle + jsdom harness pattern | `xdb-dashboard.sh` — `bundle / typecheck / harness <name.mjs> / harnesses` |
 | `examples/` | examples/ crate commands + verified server facts | `examples.sh` — `build / list / run <bin> [-- args…]` |
-| `docker/` | compose/Docker deployment ops — the DEFAULT stack (API + MongoDB in containers; MongoDB is ALWAYS Docker) | `xdb-compose.sh` — `up / watch / build [--no-cache] / logs / password / restart / ps / down / deploy / battery / mongo` |
+| `docker/` | compose/Docker deployment ops — the DEFAULT stack (API + MongoDB in containers; MongoDB is ALWAYS Docker) | `xdb-compose.sh` — `up / build [--no-cache] / logs / password / restart / ps / down / deploy / battery / mongo` (compose pair always `compose.base.yaml` + `compose.<XDB_ENV>.yaml`, default `pre`) |
 | `credentials/` | credential regeneration recipes (machine-local secrets live in `.pi/notes/credentials.md`) | `hash-token.py` (Argon2id via uv) + `gen-cert.sh` (self-signed TLS) |
 | `perms-watcher-ritual/` | perms/config watcher snapshot & restore ritual | `perms-watcher.sh` — `snapshot <file> [label] / restore <file> [snapshot] / list` |
 

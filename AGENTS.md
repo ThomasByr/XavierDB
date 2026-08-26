@@ -63,7 +63,8 @@ All commands behind these are documented in `.agents/INDEX.md` + the SKILL.md
 of each folder; prefer a script over a hand-typed command:
 
 - Docker stack (API + MongoDB; the DEFAULT): `.agents/skills/docker/xdb-compose.sh`
-  (`up` / `watch` / `build` / `logs` / `restart` / `ps` / `down` / `deploy` / `battery`)
+  (`up` / `build` / `logs` / `restart` / `ps` / `down` / `deploy` / `battery`; env
+  selection via `XDB_ENV=dev|pre|prod`, default `pre`)
 - integration battery (fixture bootstrap + `cargo test`):
   `.agents/skills/build-run-test/battery.sh`
 - dashboard rebuild + jsdom harnesses:

@@ -22,6 +22,11 @@ XDB_BIN="${XDB_BIN:-XavierDB}"
 # gitignored and transient). Override with XDB_LOG=/tmp/xdb.log if you prefer.
 XDB_LOG="${XDB_LOG:-$XDB_REPO/target/xdb.log}"
 
+# --- docker compose stack --------------------------------------------------
+# Which overlay xdb-compose.sh pairs with the base compose.base.yaml: dev | pre
+# | prod. Default pre (pre-prod shape: prod image, no watch, named volume).
+XDB_ENV="${XDB_ENV:-pre}"
+
 # --- network (mirrors server.yml defaults — see knowledge/config-world.md) --
 XDB_HOST="${XDB_HOST:-127.0.0.1}"
 XDB_PORT="${XDB_PORT:-8000}"

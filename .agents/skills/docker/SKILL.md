@@ -5,7 +5,7 @@ description: Docker/compose deployment for XavierDB — the DEFAULT way to run, 
 
 # Docker / compose deployment — VERIFIED 2026-08-16 on Docker Desktop 29.7.2 (WSL2)
 
-> **Script:** `xdb-compose.sh` (same dir) — `up | watch | build [--no-cache] |
+> **Script:** `xdb-compose.sh` (same dir) — `up | build [--no-cache] |
 > logs [-f] | password | restart | ps | down | deploy | battery | mongo`. Prefer it over
 > hand-typed commands; defaults overridable via `XDB_*` env (see
 > `.agents/settings/defaults.sh`).
@@ -33,15 +33,56 @@ stub — invoke git-bash explicitly for tests/bootstrap.sh
 
 ## Ops commands
 
+The stack is ALWAYS base + one overlay, passed explicitly (`-f`) so no
+implicit override file is ever auto-merged:
+
 ```bash
-docker compose up --build -d     # builds API image + starts MongoDB + API (incremental: layer cache)
-docker compose watch             # rebuilds image on ./Cargo.toml or ./src changes
-docker compose build --no-cache xavierdb   # force a full rebuild when the cache is suspect
-docker compose logs xavierdb          # first-run dashboard password is printed here
-docker compose restart xavierdb       # needed after server.yml changes (read at process start only)
+# via the script (XDB_ENV=dev|pre|prod, default pre — see defaults.sh):
+xdb-compose.sh up                     # docker compose -f compose.base.yaml -f compose.<env>.yaml up --build -d
+
+# by hand:
+docker compose -f compose.yaml -f compose.pre.yaml up --build -d
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build   # dev cargo-watch loop
+docker compose -f compose.yaml -f compose.prod.yaml ...            # prod (deploy.sh)
+docker compose -f compose.yaml -f compose.pre.yaml build --no-cache xavierdb   # force full rebuild
+docker compose -f compose.yaml -f compose.pre.yaml logs xavierdb    # first-run dashboard password
+docker compose -f compose.yaml -f compose.pre.yaml restart xavierdb # needed after server.yml changes
 ```
 
-## compose.yaml facts (verified)
+## Compose file layout (base + overlays, since 2026-08-21)
+
+- `compose.base.yaml` — BASE, never used alone: both services, image/build,
+  healthchecks, depends_on, ulimits, 127.0.0.1 port bindings, HOST/
+  MONGODB_URI env, the `.:/app` repo mount, `xavier_configdb`. NO resource
+  limits, NO mongo data mount, NO develop.watch, NO TRUST_PROXY_HEADERS.
+- `compose.dev.yaml` — cargo-watch loop (Dockerfile.dev image
+  `xavierdb-api-dev`), NO resource limits (in-container builds use whatever
+  the host has; test DBs are small), mongo named volume + default WT cache,
+  faster healthcheck.
+- `compose.pre.yaml` (script DEFAULT) — prod-shaped: prod image, no watch,
+  mongo 4g/5g-swap/WT 2.0, API 0.5g/1g-swap, named volume `xavier_mongo_db`,
+  literals (pinned per env, not env-var tunable).
+- `compose.prod.yaml` — the 8 GB OVH VPS: mongo 7g/8.5g-swap/WT 3.5 (defaults
+  of the `${XAVIER_*}` interpolation vars, tunable via `.env`), API
+  0.5g/1g-swap, **host bind mount** `${XAVIER_MONGO_DATA:-${HOME}/data/
+  xavier-mongo-db}:/data/db`, TRUST_PROXY_HEADERS=true. Mongo runs with the
+  image default user here (root entrypoint chowns the bind mount, drops to
+  mongodb) — dev/pre keep the `user: ":"` hack. MIGRATION NOTE in the file:
+  prod ran on the named volume before; switching needs a one-time data copy.
+- `compose.example.yaml` — STANDALONE end-user template (base+prod merged,
+  `${XAVIER_*}`-parameterized, bind default `./data/mongo`): users copy it to
+  `compose.yaml` (gitignored, local copy) and tune `.env` (see `.env.example`). Never auto-loaded.
+- `compose.override.yaml` is GONE (and `docker compose watch` / `develop.watch`
+  with it — the cargo-watch dev loop replaced image-rebuild watch; `xdb-
+  compose.sh watch` was removed).
+- Merge rules that matter (verified 2026-08-21 via `docker compose config`):
+  scalars/maps overridden by the later file; volumes merge by container
+  target path (pre/prod re-mounting `/data/db` replaces any base/dev mount);
+  ports concatenate (identical everywhere → base only).
+
+## compose file facts (verified)
+
+## compose file facts (verified)
 
 - xavierdb has **no `image:` key** (build-only; with both, compose would tag the
   build and clobber the official `rust:1-slim-bookworm` tag).
@@ -55,15 +96,15 @@ docker compose restart xavierdb       # needed after server.yml changes (read at
   same server.yml with bare-metal defaults (127.0.0.1 / localhost) works in
   both worlds. EXCEPTION: `admin.username`/`admin.password_hash` always come
   from the file (Windows always sets `USERNAME` — an env override would
-  silently break the dashboard login on bare metal). `.env` now holds ONLY
-  `UID`/`GID` (compose `user:` interpolation).
+  silently break the dashboard login on bare metal). `.env` now holds
+  UID/GID (compose `user:` interpolation) + the `XAVIER_*` prod resource
+  vars (compose interpolation in compose.prod.yaml / compose.example.yaml
+  ONLY — dev/pre overlays use literals; the app never reads .env).
 - `user: ":"` (mongodb) and `user: "$UID:$GID"` (xavierdb, from .env UID/GID=1000)
   both run fine on Docker Desktop; the repo mount stays transparently
   editable from Windows.
-- Mongo volume: intended `${HOME}/data/xavier-mongo-db` bind mount. On this
-  Windows host `${HOME}` is undefined, so compose.yaml TEMPORARILY uses the
-  named volume `xavier_mongo_db` instead (marked in the file; revert to the
-  bind mount on a Linux host).
+- Mongo volume: per-env (see the layout section above) — named volume
+  `xavier_mongo_db` for dev/pre, host bind mount for prod/example.
 - First boot with no `server.yml` in the repo: the server creates it from the
   embedded `server.yml.example` template and (blank `admin.password_hash`)
   generates a dashboard password printed once — `docker compose logs xavierdb`.
@@ -147,19 +188,21 @@ come from the target cache mount); image binary is the REAL one
    `docker run --rm --entrypoint ls <img> -la /usr/local/bin/XavierDB`:
    ~437 KB = dummy, ~19.6 MB = real.
 
-## deploy.sh & compose.override.yaml (2026-08-17)
+## deploy.sh & the dev loop (restructured 2026-08-21)
 
 - `deploy.sh` (repo root, for the Linux prod host): `set -euo pipefail`,
-  `git pull origin main` → `docker compose -f compose.yaml build xavierdb` →
-  `docker compose -f compose.yaml up -d`. Because it passes `-f
-  compose.yaml`, compose does NOT auto-merge `compose.override.yaml`
-  (the override is only picked up when compose is invoked WITHOUT `-f`)
-  — so prod never sees the dev override. NOTE: plain `docker compose up
-  -d` (no -f) DOES merge the override → boots the dev cargo-watch stack;
-  use `-f compose.yaml` for the prod-style stack. See the dev-override
-  bullet under "compose.yaml facts" for the verified dev loop.
-- `compose.override.yaml` + `Dockerfile.dev` (dev-only, committed; VERIFIED
-  WORKING 2026-08-18 on Docker Desktop): builds the dev image (rust:1-
+  `git pull origin main` → `docker compose -f compose.base.yaml -f
+  compose.prod.yaml build xavierdb` → `... up -d`. It pins the PROD pair.
+  Prod resource tuning lives in the VPS's `.env` (`XAVIER_*` vars, defaults
+  in the file are the 8 GB VPS values); the mongo data path is
+  `XAVIER_MONGO_DATA` (default `${HOME}/data/xavier-mongo-db`).
+  ONE-TIME MIGRATION (old stack ran mongo on the named volume
+  `xavierdb_xavier_mongo_db`): the copy-out recipe is in a comment block at
+  the top of `compose.prod.yaml` — run it on the VPS BEFORE the first
+  `deploy.sh` with the new layout, or prod comes up with an EMPTY database.
+- `compose.dev.yaml` + `Dockerfile.dev` (dev-only overlay; content VERIFIED
+  WORKING 2026-08-18 as `compose.override.yaml`, restructured 2026-08-21 —
+  re-verify the merged config on first use): builds the dev image (rust:1-
   slim-bookworm + cargo-watch BAKED IN via `cargo install --locked`, plus a
   uid-1000-owned /cargo-home — the runtime user is non-root, so no apt at
   startup and CARGO_HOME must be writable), then runs
@@ -171,13 +214,12 @@ come from the target cache mount); image binary is the REAL one
   rewrites its own state files (authorized_keys.yml on new-name logins,
   config, logs) — watching those would rebuild+restart on every login
   (verified: touching authorized_keys.yml + config does NOT restart with
-  the restricted watch). First `up -d --build api`: ~10 min image build
+  the restricted watch). First `up -d --build`: ~10 min image build
   (cargo install cargo-watch) + full dep compile into the target-cache
   volume; later restarts ≈ 20 s (deps cached), src-only rebuilds ≈ 1 min.
   Cosmetic: the container flaps "unhealthy" while a rebuild runs (server
   not listening yet) — docker only reports, it does NOT restart the
-  container (no autoheal). The PROD stack is unaffected: `deploy.sh` /
-  `docker compose -f compose.yaml ...` never merge the override.
+  container (no autoheal).
   History: the previous override ran `apt-get install cargo-watch` as the
   non-root user at startup → "Permission denied" crash loop (exit 100),
   and cargo-watch isn't in Debian repos anyway.
