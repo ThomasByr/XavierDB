@@ -29,8 +29,10 @@
 
 > **tl;dr**: We can never offer any guarantees. However...
 > Battle-tested since 18-08-2026 20:00 CEST (UTC+2) in real production.
-> Multiple human reviews and use-cases, running against a multi-GiB MongoDB database
-> with sustained hundreds of requests per second across multiple clients 24/7.
+> Not a toy project, it is our production backend for our own apps and services.
+> Figured it was worth sharing. Multiple human reviews and use-cases, running
+> against a multi-GiB MongoDB database with sustained hundreds of requests per
+> second across multiple clients 24/7.
 
 This project uses a ton of automation to run tests, review documentation and
 suggest code blocks. [pi.dev](https://pi.dev/) has been used as a harness.
@@ -89,12 +91,15 @@ List of Pi packages (always latest version, unordered and unfiltered):
 ## Quick start (Docker)
 
 > [!NOTE]
-> Put your MongoDB data in `{HOME}/data/xavier-mongo-db` or edit
-> [compose.yaml](compose.yaml) to change the volume mount.
+> This runs the PROD-style stack. Resource limits (memory/CPU/WiredTiger
+> cache) are tuned in `.env` — defaults target an 8 GB host. MongoDB data
+> lives in `./data/mongo` by default; change it with `XAVIER_MONGO_DATA`
+> in `.env` (see `.env.example`).
 
 Create your config files from the examples (edit if needed - defaults will work):
 
 ```bash
+cp compose.example.yaml compose.yaml   # standalone prod-style stack
 cp .env.example .env
 cp server.yml.example server.yml
 touch authorized_keys.yml
@@ -108,22 +113,22 @@ touch authorized_keys.yml
 Prerequisites: Docker with Compose v2+ (e.g. Docker Desktop).
 
 ```bash
-docker compose -f compose.yaml up -d
+docker compose up -d --build
 ```
 
 <details>
 <summary>Rebuild without cache</summary>
 
 ```bash
-docker compose -f compose.yaml build --no-cache xavierdb
+docker compose build --no-cache xavierdb
 ```
 
-Then the usual `docker compose -f compose.yaml up -d` to restart the API.
+Then the usual `docker compose up -d` to restart the API.
 
 </details>
 
 State persists on the host: the whole repo root is bind-mounted into the
-container (`compose.yaml`), so `server.yml`, `config` (and backups),
+container (`compose.base.yaml`), so `server.yml`, `config` (and backups),
 `authorized_keys.yml` and the log files live in your checkout.
 
 The API reads the repo's `server.yml` (created from `server.yml.example` on
@@ -132,7 +137,7 @@ is **generated and printed once** in the API container logs (it is hashed
 into `server.yml` — `admin.username` defaults to `admin`):
 
 ```bash
-docker compose -f compose.yaml logs xavierdb
+docker compose logs xavierdb
 ```
 
 <details>
@@ -209,12 +214,22 @@ Read more in the [examples](examples/README.md) README.
 ## Development
 
 ```bash
-docker compose -f compose.yaml watch    # rebuilds the API image on Cargo.toml/src changes
-# or, manually (incremental; clean rebuild: docker compose build --no-cache xavierdb):
-docker compose -f compose.yaml up --build -d
-# dev hot-reload loop (compile + run INSIDE the container; uses the override):
-docker compose up -d --build xavierdb
+# dev hot-reload loop (compile + run INSIDE the container; needs the dev overlay):
+docker compose -f compose.base.yaml -f compose.dev.yaml up -d --build
+# or, plain rebuilds of the prod-style image (incremental; clean rebuild:
+# add --no-cache):
+docker compose -f compose.base.yaml -f compose.pre.yaml up --build -d
 ```
+
+The repo's own compose setup is split:
+
+- `compose.base.yaml` (base, common config) + one overlay per environment
+- `compose.dev.yaml` (cargo-watch loop),
+- `compose.pre.yaml` (pre-prod, no watch),
+- `compose.prod.yaml` (the OVH VPS, resource-tunable via `.env`).
+
+End users don't need the overlays:
+`compose.example.yaml` is the standalone copy-to-`compose.yaml` template.
 
 <details>
 <summary>Bare metal development</summary>
