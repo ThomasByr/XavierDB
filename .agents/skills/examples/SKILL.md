@@ -1,3 +1,8 @@
+---
+name: examples
+description: Runnable client examples crate for XavierDB — 9 setup_<name>/<name> binary pairs (projection, pagination, query, indexes, write, ls, errors, health, pernames) showcasing the REST API against a live server. Use to build, list, or run the examples via examples.sh or --manifest-path examples/Cargo.toml.
+---
+
 # Examples crate — runnable client examples
 
 > **Script:** `examples.sh` (same dir) — `build | list | run <bin> [-- args…]`.

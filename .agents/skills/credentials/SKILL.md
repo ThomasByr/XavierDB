@@ -1,3 +1,8 @@
+---
+name: credentials
+description: Machine-local secrets & regeneration recipes for XavierDB — dashboard password, client app tokens (Argon2id hashing), self-signed TLS certs, MongoDB. Use to obtain or regenerate credentials, hash tokens, or handle server.yml / authorized_keys.yml secret values. Actual secrets always live in .pi/notes/credentials.md, never in repo files.
+---
+
 # Credentials — machine-local secrets & regeneration recipes
 
 > **Scripts:** `hash-token.py` (Argon2id-hash a token via `uv run --with

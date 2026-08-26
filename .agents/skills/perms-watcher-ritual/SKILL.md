@@ -1,3 +1,8 @@
+---
+name: perms-watcher-ritual
+description: Snapshot & restore ritual for authorized_keys.yml and the binary config file via perms-watcher.sh, to test permission/config changes and verify hot reload (notify watcher, ~500 ms debounce). Includes the loss-window, non-existent-file, and atomic-rename watcher traps. Use when editing perms/config and checking watcher reload.
+---
+
 # Perms/config watcher — snapshot & restore ritual
 
 > **Script:** `perms-watcher.sh` (same dir) — `snapshot <file> [label] |

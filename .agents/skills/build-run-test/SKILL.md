@@ -1,3 +1,8 @@
+---
+name: build-run-test
+description: "Build, run & test the XavierDB Rust server. Docker-first flow: xdb-compose.sh up (API + MongoDB) then battery.sh run (local cargo test against the published ports), with a bare-metal xdb-restart.sh fallback ritual only when Docker is broken. Use when compiling, launching, or running the integration test battery."
+---
+
 # Build, run & test — Docker-first (bare metal only as fallback)
 
 > **Scripts:** `battery.sh` (`bootstrap [--dash-user U] [--dash-pass P] | run |

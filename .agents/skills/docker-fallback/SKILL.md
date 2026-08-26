@@ -1,3 +1,8 @@
+---
+name: docker-fallback
+description: Bare-metal XavierDB server fallback ritual when Docker cannot run — xdb-restart.sh kill|build|start|test subcommands plus the cargo build --tests vs cargo test clean-sequence trap. ACTIVATE ONLY when the Docker default (xdb-compose.sh up) is broken; MongoDB always stays in Docker even here.
+---
+
 # Docker fallback — bare-metal server when Docker has issues
 
 > **Script:** `xdb-restart.sh` (same dir) — `kill | kill-port <port> | build |

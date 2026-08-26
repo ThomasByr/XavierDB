@@ -1,3 +1,8 @@
+---
+name: docker
+description: Docker/compose deployment for XavierDB — the DEFAULT way to run, build, deploy AND test. xdb-compose.sh up|watch|build|logs|restart|ps|down|deploy|battery, plus how MongoDB is always launched via Docker and the inotify/watcher_reload limitation on Docker Desktop. Use for managing the API + MongoDB container stack.
+---
+
 # Docker / compose deployment — VERIFIED 2026-08-16 on Docker Desktop 29.7.2 (WSL2)
 
 > **Script:** `xdb-compose.sh` (same dir) — `up | watch | build [--no-cache] |

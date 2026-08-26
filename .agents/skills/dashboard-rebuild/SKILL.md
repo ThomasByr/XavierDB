@@ -1,3 +1,8 @@
+---
+name: dashboard-rebuild
+description: Rebuild cycle for the embedded admin dashboard SPA — TypeScript/esbuild bundling plus the compile-time include_str! embed and stack re-serve — and its jsdom browser-behavior harnesses (tests/dashboard/*.mjs). Use when changing src/assets TS/CSS/HTML or debugging dashboard UI without a browser.
+---
+
 # Dashboard rebuild cycle (compile-time embed — 2 steps!)
 
 > **Script:** `xdb-dashboard.sh` (same dir) — `bundle | typecheck | all |
