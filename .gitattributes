@@ -1,0 +1,7 @@
+# Normalize all text files to LF in the index and working tree. CRLF breaks
+# shebangs/shell parsing on Linux (`bash\r` interpreter errors) and pollutes
+# YAML/env values; nothing in this repo needs CRLF (no .bat/.cmd/.ps1 files).
+* text=auto eol=lf
+
+# Explicit for the files where CRLF is outright fatal.
+*.sh text eol=lf
