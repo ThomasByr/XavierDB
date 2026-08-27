@@ -32,7 +32,7 @@ metal, Windows):
   too. Would become host-wide under `network_mode: host`.
 
 These feed `pressure`, so the adaptive limit reacts to the container's OWN
-limits (e.g. `memory: 0.5g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
+limits (e.g. `memory: 1g`, `cpus: "1.0"` in compose.yaml), not the VPS's.
 
 ### Adaptive formula
 

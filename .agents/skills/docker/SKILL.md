@@ -60,11 +60,11 @@ docker compose -f compose.yaml -f compose.pre.yaml restart xavierdb # needed aft
   the host has; test DBs are small), mongo named volume + default WT cache,
   faster healthcheck.
 - `compose.pre.yaml` (script DEFAULT) — prod-shaped: prod image, no watch,
-  mongo 4g/5g-swap/WT 2.0, API 0.5g/1g-swap, named volume `xavier_mongo_db`,
+  mongo 4g/5g-swap/WT 2.0, API 1g/1.5g-swap, named volume `xavier_mongo_db`,
   literals (pinned per env, not env-var tunable).
 - `compose.prod.yaml` — the 8 GB OVH VPS: mongo 7g/8.5g-swap/WT 3.5 (defaults
   of the `${XAVIER_*}` interpolation vars, tunable via `.env`), API
-  0.5g/1g-swap, **host bind mount** `${XAVIER_MONGO_DATA:-${HOME}/data/
+  1g/1.5g-swap, **host bind mount** `${XAVIER_MONGO_DATA:-${HOME}/data/
   xavier-mongo-db}:/data/db`, TRUST_PROXY_HEADERS=true. Mongo runs with the
   image default user here (root entrypoint chowns the bind mount, drops to
   mongodb) — dev/pre keep the `user: ":"` hack. MIGRATION NOTE in the file:
