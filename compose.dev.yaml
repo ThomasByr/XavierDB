@@ -22,7 +22,6 @@
 services:
   # No resource limits and no --wiredTigerCacheSizeGB override in dev
   mongodb:
-    user: ":"
     volumes:
       - xavier_mongo_db:/data/db
 

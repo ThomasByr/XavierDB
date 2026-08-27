@@ -20,8 +20,8 @@
 #
 # MongoDB data lives in a plain host folder (default ./data/mongo, relative
 # to this file) — back it up like any other directory. The mongo container
-# runs with the image defaults: the entrypoint starts as root, chowns the
-# data dir, then drops to the mongodb user.
+# runs as root (`user: ":"`): the entrypoint chowns the data dir, then
+# drops to the mongodb user.
 #
 # The API is published on 127.0.0.1:8000 ONLY — put a reverse proxy (nginx,
 # Caddy, Traefik) in front for TLS. That is what TRUST_PROXY_HEADERS=true
@@ -32,6 +32,7 @@ services:
     restart: unless-stopped
     image: mongodb/mongodb-community-server:latest  # official MongoDB Community image
     container_name: MongoDB
+    user: ":"
     environment:
       - TZ=Europe/Paris
     ports:

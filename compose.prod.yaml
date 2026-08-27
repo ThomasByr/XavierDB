@@ -19,10 +19,10 @@
 #     alpine sh -c 'cp -a /from/. /to/'
 # then bring the new stack up.
 #
-# The mongo service runs with the image default user (no `user:` override):
-# the official entrypoint starts as root, chowns the bind-mounted data dir,
-# then drops to the mongodb user — required for a host bind mount to be
-# writable.
+# The mongo service runs as root (`user: ":"`, set in compose.base.yaml
+# with all overlays inheriting it): the official entrypoint chowns the
+# bind-mounted data dir, then drops to the mongodb user — required for a
+# host bind mount to be writable.
 
 services:
   mongodb:

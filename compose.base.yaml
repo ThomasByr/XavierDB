@@ -25,6 +25,7 @@ services:
     restart: unless-stopped
     image: mongodb/mongodb-community-server:latest  # official MongoDB Community image
     container_name: MongoDB
+    user: ":"
     environment:
       - TZ=Europe/Paris
     ports:
