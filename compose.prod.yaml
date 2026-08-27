@@ -45,9 +45,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${XAVIER_API_MEM:-0.5g}
+          memory: ${XAVIER_API_MEM:-1g}
           cpus: "${XAVIER_API_CPUS:-1.0}"
-    memswap_limit: ${XAVIER_API_MEMSWAP:-1g}       # 0.5g RAM + 0.5g swap
+    memswap_limit: ${XAVIER_API_MEMSWAP:-1.5g}     # 1g RAM + 0.5g swap
     environment:
       # Trust X-Real-IP / X-Forwarded-For for the client IP (throttles + logs).
       # Safe here BECAUSE the port below is published to 127.0.0.1 ONLY: the
