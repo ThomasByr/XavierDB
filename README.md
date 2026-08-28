@@ -28,8 +28,7 @@
 <summary>Disclaimer and usage of generative AI</summary>
 
 > **tl;dr**: We can never offer any guarantees. However...
-> Battle-tested since 18-08-2026 20:00 CEST (UTC+2) in real production.
-> Not a toy project, it is our production backend for our own apps and services.
+> Battle-tested since 18-08-2026 20:00 CEST (UTC+2) in our production backend.
 > Figured it was worth sharing. Multiple human reviews and use-cases, running
 > against a multi-GiB MongoDB database with sustained hundreds of requests per
 > second across multiple clients 24/7.
@@ -99,7 +98,7 @@ List of Pi packages (always latest version, unordered and unfiltered):
 Create your config files from the examples (edit if needed - defaults will work):
 
 ```bash
-cp compose.example.yaml compose.yaml   # standalone prod-style stack
+cp compose.example.yaml compose.yaml
 cp .env.example .env
 cp server.yml.example server.yml
 touch authorized_keys.yml
@@ -115,6 +114,20 @@ Prerequisites: Docker with Compose v2+ (e.g. Docker Desktop).
 ```bash
 docker compose up -d --build
 ```
+
+<details>
+<summary>Have a 8GB RAM host with 4 CPU cores?</summary>
+
+Simply use the prod overlay:
+
+```bash
+docker compose -f compose.base.yaml -f compose.prod.yaml up -d --build
+```
+
+Edit `.env` to tune the resource limits (memory/CPU/WiredTiger cache) for your
+host as well as data directory.
+
+</details>
 
 <details>
 <summary>Rebuild without cache</summary>
